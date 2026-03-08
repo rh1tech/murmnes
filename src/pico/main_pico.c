@@ -62,7 +62,10 @@ static int audio_frame_counter = 0;
 
 static void feed_audio(void)
 {
-    while (hstx_di_queue_get_level() < 200 && nes_audio_pos + 4 <= nes_audio_count) {
+    while (nes_audio_pos + 4 <= nes_audio_count) {
+        int saved_pos = nes_audio_pos;
+        int saved_fc = audio_frame_counter;
+
         audio_sample_t samples[4];
         for (int i = 0; i < 4; i++) {
             int16_t s = nes_audio_buf[nes_audio_pos++];
@@ -73,13 +76,17 @@ static void feed_audio(void)
         audio_frame_counter = hstx_packet_set_audio_samples(&packet, samples, 4, audio_frame_counter);
         hstx_data_island_t island;
         hstx_encode_data_island(&island, &packet, false, true);
-        hstx_di_queue_push(&island);
+        if (!hstx_di_queue_push(&island)) {
+            nes_audio_pos = saved_pos;
+            audio_frame_counter = saved_fc;
+            break;
+        }
     }
 }
 
 static void feed_silence(void)
 {
-    while (hstx_di_queue_get_level() < 200) {
+    while (hstx_di_queue_get_level() < 400) {
         audio_sample_t samples[4] = {0};
         hstx_packet_t packet;
         audio_frame_counter = hstx_packet_set_audio_samples(&packet, samples, 4, audio_frame_counter);
@@ -278,6 +285,10 @@ static void real_main(void)
     video_output_set_vsync_callback(vsync_cb);
     video_output_init(FRAME_WIDTH, FRAME_HEIGHT);
     pico_hdmi_set_audio_sample_rate(SAMPLE_RATE);
+    /* NES actual frame rate is ~60.099 Hz (1789773 / 29780.5 CPU cycles).
+     * At 44100 Hz, that's ~733.5 samples/frame, not 735 (44100/60).
+     * Tune ISR consumption to match: 733.5 * 65536 / 525 ≈ 91577 */
+    hstx_di_queue_set_samples_per_line_fp(91577);
     video_output_set_scanline_callback(scanline_callback);
     multicore_launch_core1(video_output_core1_run);
     sleep_ms(100);
@@ -295,24 +306,15 @@ static void real_main(void)
         }
         vsync_flag = 0;
 
-        /* Auto-press START at 1s to begin game (for audio testing) */
         int joypad = (frame_count >= 60 && frame_count < 63) ? 0x08 : 0;
         qnes_emulate_frame(joypad, 0);
 
-        /* Read NES audio generated this frame */
+        /* Read NES audio generated this frame, preserving leftover samples */
+        int leftover = nes_audio_count - nes_audio_pos;
+        if (leftover > 0)
+            memmove(nes_audio_buf, nes_audio_buf + nes_audio_pos, leftover * sizeof(int16_t));
         nes_audio_pos = 0;
-        nes_audio_count = (int)qnes_read_samples(nes_audio_buf, NES_AUDIO_BUF_SIZE);
-
-        /* Debug: print audio stats for first 3 seconds */
-        if (frame_count < 180 && frame_count % 30 == 0) {
-            int16_t peak = 0;
-            for (int i = 0; i < nes_audio_count; i++) {
-                int16_t a = nes_audio_buf[i] < 0 ? -nes_audio_buf[i] : nes_audio_buf[i];
-                if (a > peak) peak = a;
-            }
-            printf("f%lu: read=%d peak=%d\n",
-                   (unsigned long)frame_count, nes_audio_count, peak);
-        }
+        nes_audio_count = leftover + (int)qnes_read_samples(nes_audio_buf + leftover, NES_AUDIO_BUF_SIZE - leftover);
 
         update_palette();
         frame_pitch = 272;

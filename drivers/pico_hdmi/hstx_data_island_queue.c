@@ -4,7 +4,7 @@
 
 #include "pico.h"
 
-#define DI_RING_BUFFER_SIZE 256
+#define DI_RING_BUFFER_SIZE 512
 static hstx_data_island_t di_ring_buffer[DI_RING_BUFFER_SIZE];
 static volatile uint32_t di_ring_head = 0;
 static volatile uint32_t di_ring_tail = 0;
