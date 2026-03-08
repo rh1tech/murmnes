@@ -27,7 +27,11 @@ add_compile_definitions(PSRAM_MAX_FREQ_MHZ=${PSRAM_MAX_FREQ_MHZ})
 add_subdirectory(${PROJECT_ROOT}/lib/fatfs fatfs)
 add_subdirectory(${DRIVERSDIR}/sdcard sdcard)
 add_subdirectory(${DRIVERSDIR}/ps2kbd ps2kbd)
-add_subdirectory(${DRIVERSDIR}/usbhid usbhid)
+
+option(USB_HID_ENABLED "Enable USB HID host (disables USB serial)" OFF)
+if(USB_HID_ENABLED)
+    add_subdirectory(${DRIVERSDIR}/usbhid usbhid)
+endif()
 
 # QuickNES emulation core sources (excluding NTSC filter)
 set(QNES_SOURCES
@@ -104,11 +108,14 @@ target_link_libraries(murmnes
     pico_hdmi
     sdcard
     ps2kbd
-    usbhid
 )
 
-# USB HID uses host mode — disable stdio USB to avoid conflict
-pico_enable_stdio_usb(murmnes 0)
+if(USB_HID_ENABLED)
+    target_link_libraries(murmnes usbhid)
+    pico_enable_stdio_usb(murmnes 0)
+else()
+    pico_enable_stdio_usb(murmnes 1)
+endif()
 pico_enable_stdio_uart(murmnes 0)
 
 # Optional: embed NES ROM into flash

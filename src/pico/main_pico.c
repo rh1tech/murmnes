@@ -9,6 +9,9 @@
 
 #include "pico/multicore.h"
 #include "pico/stdlib.h"
+#if !USB_HID_ENABLED
+#include "pico/stdio_usb.h"
+#endif
 
 #include "hardware/clocks.h"
 
@@ -61,7 +64,7 @@ static int audio_frame_counter = 0;
 
 /* Minimum queue level — below this, pad with silence to prevent
  * the ISR from hitting 0 and using the broken-B-frame fallback. */
-#define AUDIO_QUEUE_MIN 100
+#define AUDIO_QUEUE_MIN 200
 
 static bool push_audio_packet(const audio_sample_t *samples)
 {
@@ -264,7 +267,16 @@ static void real_main(void)
     gpio_put(PICO_DEFAULT_LED_PIN, 1);
 
     paint_stack();
+
+#if !USB_HID_ENABLED
+    /* Wait for USB serial console */
+    for (int i = 0; i < 50; i++) {
+        if (stdio_usb_connected()) break;
+        sleep_ms(100);
+    }
+#else
     sleep_ms(500);
+#endif
 
     printf("\n=== murmnes (QuickNES) ===\n");
     printf("sys_clk: %lu Hz\n", (unsigned long)clock_get_hz(clk_sys));
