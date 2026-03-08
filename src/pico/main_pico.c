@@ -14,6 +14,7 @@
 #endif
 
 #include "hardware/clocks.h"
+#include "hardware/sync.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -62,10 +63,6 @@ static int nes_audio_count = 0;
 static int nes_audio_pos = 0;
 static int audio_frame_counter = 0;
 
-/* Minimum queue level — below this, pad with silence to prevent
- * the ISR from hitting 0 and using the broken-B-frame fallback. */
-#define AUDIO_QUEUE_MIN 200
-
 static bool push_audio_packet(const audio_sample_t *samples)
 {
     hstx_packet_t packet;
@@ -78,8 +75,13 @@ static bool push_audio_packet(const audio_sample_t *samples)
     return true;
 }
 
+static volatile bool audio_busy = false;
+
 static void feed_audio(void)
 {
+    if (audio_busy) return;
+    audio_busy = true;
+
     /* Push real NES audio samples */
     while (nes_audio_pos + 4 <= nes_audio_count) {
         audio_sample_t samples[4];
@@ -93,14 +95,11 @@ static void feed_audio(void)
         nes_audio_pos += 4;
     }
 
-    /* If queue is getting low and no more NES samples, pad with silence
-     * using proper frame counter to maintain valid B-frame sequence */
-    while (hstx_di_queue_get_level() < AUDIO_QUEUE_MIN) {
-        audio_sample_t silence[4] = {0};
-        if (!push_audio_packet(silence))
-            break;
-    }
+    audio_busy = false;
 }
+
+static struct repeating_timer audio_timer;
+static bool audio_timer_cb(struct repeating_timer *t) { (void)t; feed_audio(); return true; }
 
 static void feed_silence(void)
 {
@@ -307,13 +306,12 @@ static void real_main(void)
     video_output_set_vsync_callback(vsync_cb);
     video_output_init(FRAME_WIDTH, FRAME_HEIGHT);
     pico_hdmi_set_audio_sample_rate(SAMPLE_RATE);
-    /* NES actual frame rate is ~60.099 Hz (1789773 / 29780.5 CPU cycles).
-     * At 44100 Hz, that's ~733.5 samples/frame, not 735 (44100/60).
-     * Tune ISR consumption to match: 733.5 * 65536 / 525 ≈ 91577 */
-    hstx_di_queue_set_samples_per_line_fp(91577);
     video_output_set_scanline_callback(scanline_callback);
     multicore_launch_core1(video_output_core1_run);
     sleep_ms(100);
+
+    /* Timer feeds audio every 4ms during emulation, preventing queue drain */
+    add_repeating_timer_ms(-4, audio_timer_cb, NULL, &audio_timer);
     printf("HDMI active\n");
 
 #ifdef HAS_NES_ROM
@@ -331,12 +329,15 @@ static void real_main(void)
         int joypad = (frame_count >= 60 && frame_count < 63) ? 0x08 : 0;
         qnes_emulate_frame(joypad, 0);
 
-        /* Read NES audio generated this frame, preserving leftover samples */
+        /* Read NES audio generated this frame, preserving leftover samples.
+         * Set audio_busy to block timer ISR during buffer swap. */
+        audio_busy = true;
         int leftover = nes_audio_count - nes_audio_pos;
         if (leftover > 0)
             memmove(nes_audio_buf, nes_audio_buf + nes_audio_pos, leftover * sizeof(int16_t));
         nes_audio_pos = 0;
         nes_audio_count = leftover + (int)qnes_read_samples(nes_audio_buf + leftover, NES_AUDIO_BUF_SIZE - leftover);
+        audio_busy = false;
 
         update_palette();
         frame_pitch = 272;
