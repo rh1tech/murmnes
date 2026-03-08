@@ -12,7 +12,6 @@
 #include "pico/stdio_usb.h"
 
 #include "hardware/clocks.h"
-#include "hardware/timer.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -97,11 +96,6 @@ static void feed_audio(void)
         hstx_di_queue_push(&island);
     }
 }
-
-/* Timer callback: tops up audio queue from Core 0 every 4ms,
- * even while qnes_emulate_frame() is running (~15ms). */
-static struct repeating_timer audio_timer;
-static bool audio_timer_cb(struct repeating_timer *t) { (void)t; feed_audio(); return true; }
 
 /* Build RGB565 palette from QuickNES frame palette + color table */
 static void update_palette(void)
@@ -293,7 +287,6 @@ static void real_main(void)
     init_sine_table();
     feed_audio();
     video_output_set_dvi_mode(false);
-    add_repeating_timer_ms(-4, audio_timer_cb, NULL, &audio_timer);
     printf("HDMI mode active\n");
 
     uint32_t frame_count = 0;
