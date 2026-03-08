@@ -18,7 +18,8 @@ public:
 	// Load iNES file
 	const char * load_ines( Auto_File_Reader );
 
-	// Load iNES from memory buffer, pointing PRG/CHR directly into data (no copy)
+	// Load iNES from memory buffer. PRG is copied (fast SRAM access);
+	// CHR remains a direct reference (decoded via tile cache).
 	const char * load_ines_data( const void* data, long size );
 
 	static const char not_ines_file [];
@@ -74,7 +75,8 @@ private:
 	long prg_size_;
 	long chr_size_;
 	unsigned mapper;
-	bool owned_; // true if prg_/chr_ were allocated by us (need free)
+	bool prg_owned_; // true if prg_ was allocated by us (need free)
+	bool chr_owned_; // true if chr_ was allocated by us (need free)
 	long round_to_bank_size( long n );
 };
 

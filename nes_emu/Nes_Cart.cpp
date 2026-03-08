@@ -25,7 +25,8 @@ Nes_Cart::Nes_Cart()
 {
 	prg_ = NULL;
 	chr_ = NULL;
-	owned_ = true;
+	prg_owned_ = true;
+	chr_owned_ = true;
 	clear();
 }
 
@@ -36,16 +37,14 @@ Nes_Cart::~Nes_Cart()
 
 void Nes_Cart::clear()
 {
-	if ( owned_ )
-	{
-		if ( prg_ )
-			free( prg_ );
-		if ( chr_ )
-			free( chr_ );
-	}
+	if ( prg_owned_ && prg_ )
+		free( prg_ );
+	if ( chr_owned_ && chr_ )
+		free( chr_ );
 	prg_ = NULL;
 	chr_ = NULL;
-	owned_ = true;
+	prg_owned_ = true;
+	chr_owned_ = true;
 
 	prg_size_ = 0;
 	chr_size_ = 0;
@@ -149,13 +148,19 @@ const char * Nes_Cart::load_ines_data( const void* data, long size )
 	if ( p + prg_bytes + chr_bytes > (const uint8_t*) data + size )
 		return "ROM file too small";
 
-	prg_ = (uint8_t*) p;
+	/* Copy PRG into SRAM — the 6502 fetches every instruction from here,
+	   so it must be fast (not behind QMI/PSRAM). */
 	prg_size_ = prg_bytes;
+	prg_ = (uint8_t*) malloc( round_to_bank_size( prg_bytes ) + 2 );
+	CHECK_ALLOC( prg_ );
+	memcpy( prg_, p, prg_bytes );
+	prg_owned_ = true;
 	p += prg_bytes;
 
+	/* CHR stays zero-copy — it is only accessed indirectly through the
+	   decoded tile cache, so QMI/PSRAM latency is tolerable. */
 	chr_ = (uint8_t*) p;
 	chr_size_ = chr_bytes;
-
-	owned_ = false;
+	chr_owned_ = false;
 	return 0;
 }

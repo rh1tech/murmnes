@@ -20,8 +20,8 @@ int qnes_init(long sample_rate);
  * Returns 0 on success, non-zero on error. */
 int qnes_load_rom(const void *data, long size);
 
-/* Load iNES ROM pointing directly into buffer (no copy).
- * Buffer must remain valid for the lifetime of emulation.
+/* Load iNES ROM from memory buffer. PRG is copied to SRAM for fast CPU
+ * access; CHR remains a direct reference into the buffer (must stay valid).
  * Returns 0 on success, non-zero on error. */
 int qnes_load_rom_inplace(const void *data, long size);
 

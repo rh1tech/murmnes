@@ -10,8 +10,12 @@
 /* Emulator allocated on demand — avoids global C++ constructor running before main() */
 static Nes_Emu *emu;
 
-/* Pixel buffer: 272 wide (256 + 16 border) x 242 tall (240 + 2 border) */
-static uint8_t pixel_buf[(256 + 16) * (240 + 2)];
+/* Double-buffered pixel output: emulator writes to back buffer while
+   the display reads from the front buffer (no tearing). */
+#define PIXEL_BUF_SIZE ((256 + 16) * (240 + 2))
+static uint8_t pixel_bufs[2][PIXEL_BUF_SIZE];
+static int back_buf = 0;  /* index emulator writes to */
+static int front_buf = 0; /* index display reads from */
 
 static bool initialized = false;
 static bool rom_loaded = false;
@@ -43,7 +47,9 @@ int qnes_init(long sample_rate)
         return -1;
     }
 
-    emu->set_pixels(pixel_buf, 256 + 16);
+    back_buf = 0;
+    front_buf = 0;
+    emu->set_pixels(pixel_bufs[back_buf], 256 + 16);
 
     const char *err = emu->set_sample_rate(sample_rate);
     if (err) {
@@ -94,7 +100,15 @@ int qnes_emulate_frame(int joypad1, int joypad2)
         return -1;
 
     const char *err = emu->emulate_frame(joypad1, joypad2);
-    return err ? -1 : 0;
+    if (err)
+        return -1;
+
+    /* Frame complete — swap buffers. Display now reads the just-finished
+       frame while the emulator will write to the other buffer next time. */
+    front_buf = back_buf;
+    back_buf ^= 1;
+    emu->set_pixels(pixel_bufs[back_buf], 256 + 16);
+    return 0;
 }
 
 const uint8_t *qnes_get_pixels(void)
@@ -102,6 +116,8 @@ const uint8_t *qnes_get_pixels(void)
     if (!rom_loaded)
         return 0;
 
+    /* frame().pixels was set during emulate_frame() and still points
+       into the front buffer (the swap doesn't overwrite it). */
     return emu->frame().pixels;
 }
 
