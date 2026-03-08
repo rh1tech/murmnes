@@ -16,9 +16,14 @@ extern "C" {
  * Returns 0 on success, non-zero on error. */
 int qnes_init(long sample_rate);
 
-/* Load iNES ROM from memory buffer.
+/* Load iNES ROM from memory buffer (copies PRG/CHR internally).
  * Returns 0 on success, non-zero on error. */
 int qnes_load_rom(const void *data, long size);
+
+/* Load iNES ROM pointing directly into buffer (no copy).
+ * Buffer must remain valid for the lifetime of emulation.
+ * Returns 0 on success, non-zero on error. */
+int qnes_load_rom_inplace(const void *data, long size);
 
 /* Emulate one frame.
  * joypad1/joypad2: button bitmask (A=0, B=1, Sel=2, Start=3, U=4, D=5, L=6, R=7)
@@ -46,6 +51,10 @@ const qnes_rgb_t *qnes_get_color_table(void);
  * max_samples: buffer capacity.
  * Returns number of samples written. */
 long qnes_read_samples(int16_t *out, long max_samples);
+
+/* Provide a PSRAM buffer for the PPU tile cache (large CHR games).
+ * Must be called before qnes_load_rom*. NULL to use heap (default). */
+void qnes_set_tile_cache_buf(void *buf, long size);
 
 /* Reset emulator. full_reset=1 for power cycle, 0 for reset button. */
 void qnes_reset(int full_reset);

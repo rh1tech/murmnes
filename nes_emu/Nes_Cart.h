@@ -17,6 +17,10 @@ public:
 	
 	// Load iNES file
 	const char * load_ines( Auto_File_Reader );
+
+	// Load iNES from memory buffer, pointing PRG/CHR directly into data (no copy)
+	const char * load_ines_data( const void* data, long size );
+
 	static const char not_ines_file [];
 	
 	// to do: support UNIF?
@@ -70,6 +74,7 @@ private:
 	long prg_size_;
 	long chr_size_;
 	unsigned mapper;
+	bool owned_; // true if prg_/chr_ were allocated by us (need free)
 	long round_to_bank_size( long n );
 };
 

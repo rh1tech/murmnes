@@ -28,6 +28,9 @@ public:
 	// Load iNES file into emulator and clear recording
 	const char * load_ines( Auto_File_Reader );
 
+	// Load iNES from memory, pointing PRG/CHR directly into buffer (no copy)
+	const char * load_ines_data( const void* data, long size );
+
 	// Set sample rate for sound generation
 	const char * set_sample_rate( long );
 

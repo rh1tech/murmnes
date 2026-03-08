@@ -25,6 +25,7 @@ Nes_Cart::Nes_Cart()
 {
 	prg_ = NULL;
 	chr_ = NULL;
+	owned_ = true;
 	clear();
 }
 
@@ -35,14 +36,17 @@ Nes_Cart::~Nes_Cart()
 
 void Nes_Cart::clear()
 {
-	if ( prg_ )
-		free( prg_ );
+	if ( owned_ )
+	{
+		if ( prg_ )
+			free( prg_ );
+		if ( chr_ )
+			free( chr_ );
+	}
 	prg_ = NULL;
-	
-	if ( chr_ )
-		free( chr_ );
 	chr_ = NULL;
-	
+	owned_ = true;
+
 	prg_size_ = 0;
 	chr_size_ = 0;
 	mapper = 0;
@@ -115,6 +119,43 @@ const char * Nes_Cart::load_ines( Auto_File_Reader in )
 	
 	RETURN_ERR( in->read( prg(), prg_size() ) );
 	RETURN_ERR( in->read( chr(), chr_size() ) );
-	
+
+	return 0;
+}
+
+const char * Nes_Cart::load_ines_data( const void* data, long size )
+{
+	clear();
+
+	const uint8_t* p = (const uint8_t*) data;
+	if ( size < 16 || 0 != memcmp( p, "NES\x1A", 4 ) )
+		return not_ines_file;
+
+	ines_header_t h;
+	memcpy( &h, p, sizeof h );
+	p += 16;
+
+	if ( h.zero [7] )
+		h.flags2 = 0;
+
+	set_mapper( h.flags, h.flags2 );
+
+	if ( h.flags & 0x04 )
+		p += 512; // skip trainer
+
+	long prg_bytes = h.prg_count * 16 * 1024L;
+	long chr_bytes = h.chr_count * 8 * 1024L;
+
+	if ( p + prg_bytes + chr_bytes > (const uint8_t*) data + size )
+		return "ROM file too small";
+
+	prg_ = (uint8_t*) p;
+	prg_size_ = prg_bytes;
+	p += prg_bytes;
+
+	chr_ = (uint8_t*) p;
+	chr_size_ = chr_bytes;
+
+	owned_ = false;
 	return 0;
 }

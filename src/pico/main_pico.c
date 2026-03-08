@@ -489,6 +489,13 @@ static void real_main(void)
     }
     printf("qnes_init OK\n");
 
+    /* Provide PSRAM for tile cache (large CHR ROMs need ~256KB+) */
+    if (psram_available) {
+        /* ROM lives at PSRAM_BASE (up to 2MB), tile cache after that */
+        void *tc = (void *)(0x11000000 + 2 * 1024 * 1024);
+        qnes_set_tile_cache_buf(tc, 1 * 1024 * 1024);
+    }
+
     /* Try loading ROM: SD card first, then flash fallback */
     bool rom_loaded = false;
 
@@ -496,29 +503,28 @@ static void real_main(void)
         long sd_rom_size = 0;
         uint8_t *sd_rom = try_load_rom_from_sd(&sd_rom_size);
         if (sd_rom) {
-            printf("qnes_load_rom from SD (%ld bytes)...\n", sd_rom_size);
-            if (qnes_load_rom(sd_rom, sd_rom_size) == 0) {
+            printf("qnes_load_rom_inplace from SD (%ld bytes)...\n", sd_rom_size);
+            if (qnes_load_rom_inplace(sd_rom, sd_rom_size) == 0) {
                 printf("SD ROM loaded OK\n");
                 rom_loaded = true;
             } else {
-                printf("qnes_load_rom (SD) FAILED\n");
+                printf("qnes_load_rom_inplace (SD) FAILED\n");
             }
-            /* QuickNES copies ROM data, so free the buffer */
-            if (!psram_available && sd_rom_buf)
+            /* inplace: PRG/CHR point into sd_rom_buf, do NOT free it */
+            if (!rom_loaded && !psram_available && sd_rom_buf)
                 free(sd_rom_buf);
-            sd_rom_buf = NULL;
         }
     }
 
 #ifdef HAS_NES_ROM
     if (!rom_loaded) {
         long rom_size = (long)(nes_rom_end - nes_rom_data);
-        printf("qnes_load_rom from flash (%ld bytes)...\n", rom_size);
-        if (qnes_load_rom(nes_rom_data, rom_size) == 0) {
+        printf("qnes_load_rom_inplace from flash (%ld bytes)...\n", rom_size);
+        if (qnes_load_rom_inplace(nes_rom_data, rom_size) == 0) {
             printf("Flash ROM loaded OK\n");
             rom_loaded = true;
         } else {
-            printf("qnes_load_rom (flash) FAILED\n");
+            printf("qnes_load_rom_inplace (flash) FAILED\n");
         }
     }
 #endif

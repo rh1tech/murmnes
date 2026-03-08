@@ -137,6 +137,7 @@ private:
 	cached_tile_t* tile_cache;
 	cached_tile_t* flipped_tiles;
 	uint8_t* tile_cache_mem;
+	bool tile_cache_mem_ext;
 	union {
 		uint8_t modified_tiles [chr_tile_count / 8];
 		uint32_t align_;

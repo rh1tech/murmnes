@@ -16,6 +16,22 @@ static uint8_t pixel_buf[(256 + 16) * (240 + 2)];
 static bool initialized = false;
 static bool rom_loaded = false;
 
+/* External tile cache buffer (PSRAM) — set by qnes_set_tile_cache_buf */
+static void *ext_tile_cache_buf = NULL;
+static long ext_tile_cache_size = 0;
+
+void qnes_set_tile_cache_buf(void *buf, long size)
+{
+    ext_tile_cache_buf = buf;
+    ext_tile_cache_size = size;
+}
+
+void *qnes_get_tile_cache_buf(long *out_size)
+{
+    if (out_size) *out_size = ext_tile_cache_size;
+    return ext_tile_cache_buf;
+}
+
 int qnes_init(long sample_rate)
 {
     if (initialized)
@@ -50,6 +66,21 @@ int qnes_load_rom(const void *data, long size)
     const char *err = emu->load_ines(in);
     if (err) {
         printf("load_ines: %s\n", err);
+        return -1;
+    }
+
+    rom_loaded = true;
+    return 0;
+}
+
+int qnes_load_rom_inplace(const void *data, long size)
+{
+    if (!initialized)
+        return -1;
+
+    const char *err = emu->load_ines_data(data, size);
+    if (err) {
+        printf("load_ines_data: %s\n", err);
         return -1;
     }
 

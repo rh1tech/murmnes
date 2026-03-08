@@ -32,6 +32,7 @@ Nes_Ppu_Impl::Nes_Ppu_Impl()
 	host_palette = NULL;
 	max_palette_size = 0;
 	tile_cache_mem = NULL;
+	tile_cache_mem_ext = false;
 	ppu_state_t::unused = 0;
 
 	mmc24_enabled = false;
@@ -84,7 +85,23 @@ const char *Nes_Ppu_Impl::open_chr( uint8_t const* new_chr, long chr_data_size )
 	
 	// allocate aligned memory for cache
 	long tile_count = chr_size / bytes_per_tile;
-	tile_cache_mem  = new uint8_t [tile_count * sizeof (cached_tile_t) * 2 + cache_line_size];
+	long cache_bytes = tile_count * sizeof (cached_tile_t) * 2 + cache_line_size;
+#ifdef QNES_EXT_TILE_CACHE
+	{
+		extern void *qnes_get_tile_cache_buf(long *);
+		long ext_size = 0;
+		void *ext = qnes_get_tile_cache_buf( &ext_size );
+		if ( ext && ext_size >= cache_bytes )
+		{
+			tile_cache_mem = (uint8_t*) ext;
+			tile_cache_mem_ext = true;
+		}
+	}
+	if ( !tile_cache_mem )
+#endif
+	{
+		tile_cache_mem = new uint8_t [cache_bytes];
+	}
 	CHECK_ALLOC( tile_cache_mem );
 	tile_cache = (cached_tile_t*) (tile_cache_mem + cache_line_size -
 			(uintptr_t) tile_cache_mem % cache_line_size);
@@ -103,8 +120,14 @@ const char *Nes_Ppu_Impl::open_chr( uint8_t const* new_chr, long chr_data_size )
 
 void Nes_Ppu_Impl::close_chr()
 {
-	delete [] tile_cache_mem;
+#ifdef QNES_EXT_TILE_CACHE
+	if ( !tile_cache_mem_ext )
+#endif
+		delete [] tile_cache_mem;
 	tile_cache_mem = NULL;
+#ifdef QNES_EXT_TILE_CACHE
+	tile_cache_mem_ext = false;
+#endif
 }
 
 void Nes_Ppu_Impl::set_chr_bank( int addr, int size, long data )

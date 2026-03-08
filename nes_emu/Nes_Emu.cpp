@@ -197,6 +197,13 @@ const char * Nes_Emu::load_ines( Auto_File_Reader in )
 	return set_cart( &private_cart );
 }
 
+const char * Nes_Emu::load_ines_data( const void* data, long size )
+{
+	close();
+	RETURN_ERR( private_cart.load_ines_data( data, size ) );
+	return set_cart( &private_cart );
+}
+
 const char * Nes_Emu::save_battery_ram( Auto_File_Writer out )
 {
 	RETURN_ERR( out.open() );
