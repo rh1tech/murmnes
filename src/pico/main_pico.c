@@ -71,10 +71,45 @@ static void __not_in_flash("vsync") vsync_cb(void)
 static int audio_frame_counter = 0;
 
 /* Encode mono NES samples into HDMI audio packets and push to DI queue.
+ * Carries leftover samples (1-3) between calls to avoid cumulative loss.
  * Runs on Core 0. All called functions are in SRAM (__not_in_flash). */
+static int16_t audio_carry[3];
+static int audio_carry_count = 0;
+
 static void __not_in_flash("audio") audio_push_samples(const int16_t *buf, int count)
 {
+    /* Merge carry from previous call */
+    int16_t merged[4];
     int pos = 0;
+
+    if (audio_carry_count > 0) {
+        for (int i = 0; i < audio_carry_count; i++)
+            merged[i] = audio_carry[i];
+        int need = 4 - audio_carry_count;
+        if (need > count) need = count;
+        for (int i = 0; i < need; i++)
+            merged[audio_carry_count + i] = buf[i];
+        pos = need;
+        if (audio_carry_count + need == 4) {
+            audio_sample_t samples[4];
+            for (int i = 0; i < 4; i++) {
+                samples[i].left = merged[i];
+                samples[i].right = merged[i];
+            }
+            hstx_packet_t packet;
+            int new_fc = hstx_packet_set_audio_samples(&packet, samples, 4, audio_frame_counter);
+            hstx_data_island_t island;
+            hstx_encode_data_island(&island, &packet, false, true);
+            if (!hstx_di_queue_push(&island)) {
+                /* Queue full — keep carry for next call */
+                return;
+            }
+            audio_frame_counter = new_fc;
+        }
+        audio_carry_count = 0;
+    }
+
+    /* Push full packets */
     while (pos + 4 <= count) {
         audio_sample_t samples[4];
         for (int i = 0; i < 4; i++) {
@@ -90,6 +125,11 @@ static void __not_in_flash("audio") audio_push_samples(const int16_t *buf, int c
         audio_frame_counter = new_fc;
         pos += 4;
     }
+
+    /* Save leftover for next call */
+    audio_carry_count = count - pos;
+    for (int i = 0; i < audio_carry_count; i++)
+        audio_carry[i] = buf[pos + i];
     hstx_di_queue_update_silence(audio_frame_counter);
 }
 
