@@ -1,4 +1,3 @@
-build_pico/
 build/
 deps/
 *.uf2

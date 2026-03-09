@@ -1,5 +1,5 @@
 #!/bin/bash
-FIRMWARE="${1:-./build_pico/murmnes.elf}"
+FIRMWARE="${1:-./build/murmnes.elf}"
 if [ ! -f "$FIRMWARE" ]; then
     FIRMWARE="${FIRMWARE%.elf}.uf2"
 fi

@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-BUILD_DIR="build_pico"
+BUILD_DIR="build"
 CMAKE_OPTS="-DPICO_PLATFORM=rp2350"
 
 # Optional: embed a ROM file
@@ -35,4 +35,4 @@ cmake $CMAKE_OPTS ../src/platform/pico
 make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 echo ""
-echo "Build complete. Firmware: $BUILD_DIR/murmnes.uf2"
+echo "Build complete. Firmware: build/murmnes.uf2"
