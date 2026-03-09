@@ -4,18 +4,16 @@
  * https://github.com/libretro/QuickNES_Core
  * SPDX-License-Identifier: LGPL-2.1-or-later
  *
+ * MMC5 rewritten with run_until() scanline simulation and proper
+ * $5204 read support. Fixes Castlevania III (E) story scroll freeze.
+ *
  * Fork maintained as part of MurmNES by Mikhail Matveev.
  * https://rh1.tech | https://github.com/rh1tech/murmnes
  */
 
 #pragma once
 
-// NES MMC5 mapper, currently only tailored for Castlevania 3 (U)
-
-// Nes_Emu 0.7.0. http://www.slack.net/~ant/
-
 #include "nes_mapper.h"
-
 #include "nes_core.h"
 #include <string.h>
 
@@ -32,6 +30,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA */
 
 #include "blargg_source.h"
 
+/* Scanline timing constants (same as MMC3 in mapper004) */
+static int const mmc5_ppu_overclock = 3;
+static nes_time_t const mmc5_first_scanline = 20 * 341 + 268;
+static nes_time_t const mmc5_last_scanline = mmc5_first_scanline + 240 * 341;
 
 struct mmc5_state_t
 {
@@ -39,10 +41,7 @@ struct mmc5_state_t
 	uint8_t regs [0x30];
 	uint8_t irq_enabled;
 };
-// to do: finalize state format
 BOOST_STATIC_ASSERT( sizeof (mmc5_state_t) == 0x31 );
-
-// MMC5
 
 class Mapper005 : public Nes_Mapper, mmc5_state_t {
 public:
@@ -51,10 +50,15 @@ public:
 		mmc5_state_t* state = this;
 		register_state( state, sizeof *state );
 	}
-	
+
 	virtual void reset_state()
 	{
-		irq_time = no_irq;
+		irq_scanline = 0;
+		irq_pending = false;
+		next_scanline_time = mmc5_first_scanline;
+		current_scanline = 0;
+		multiplier_a = 0;
+		multiplier_b = 0;
 		regs [0x00] = 2;
 		regs [0x01] = 3;
 		regs [0x14] = 0x7f;
@@ -62,23 +66,96 @@ public:
 		regs [0x16] = 0x7f;
 		regs [0x17] = 0x7f;
 	}
-	
+
 	virtual void read_state( mapper_state_t const& in )
 	{
 		Nes_Mapper::read_state( in );
-		irq_time = no_irq;
+		irq_pending = false;
+		next_scanline_time = mmc5_first_scanline;
+		current_scanline = 0;
 	}
-	
+
 	enum { regs_addr = 0x5100 };
-	
-	virtual nes_time_t next_irq( nes_time_t )
+
+	void start_frame()
 	{
-		if ( irq_enabled & 0x80 )
-			return irq_time;
-		
-		return no_irq;
+		next_scanline_time = mmc5_first_scanline;
+		current_scanline = 0;
 	}
-	
+
+	/* Simulate scanlines up to the given PPU time.
+	 * Check each scanline against irq_scanline. */
+	void run_until( nes_time_t end_time )
+	{
+		if ( !ppu_enabled() )
+			return;
+
+		end_time *= mmc5_ppu_overclock;
+		while ( next_scanline_time < end_time && next_scanline_time <= mmc5_last_scanline )
+		{
+			current_scanline++;
+			if ( irq_scanline && current_scanline == irq_scanline && !irq_pending )
+			{
+				irq_pending = true;
+			}
+			next_scanline_time += 341; /* Nes_Ppu::scanline_len */
+		}
+	}
+
+	virtual nes_time_t next_irq( nes_time_t present )
+	{
+		run_until( present );
+
+		if ( !(irq_enabled & 0x80) )
+			return no_irq;
+
+		if ( irq_pending )
+			return 0;
+
+		if ( !ppu_enabled() || !irq_scanline || irq_scanline >= 240 )
+			return no_irq;
+
+		/* Predict when the target scanline will be reached */
+		int remain = irq_scanline - current_scanline;
+		if ( remain <= 0 )
+			return no_irq; /* already passed this frame */
+
+		long time = remain * 341L + next_scanline_time;
+		if ( time > mmc5_last_scanline )
+			return no_irq;
+
+		return time / mmc5_ppu_overclock + 1;
+	}
+
+	/* $5204 read: bit 7 = IRQ pending, bit 6 = in-frame.
+	 * Reading acknowledges (clears pending). */
+	virtual int read( nes_time_t time, nes_addr_t addr )
+	{
+		if ( addr == 0x5204 )
+		{
+			run_until( time );
+			int result = 0;
+			if ( current_scanline > 0 && current_scanline <= 240 )
+				result |= 0x40;
+			if ( irq_pending )
+				result |= 0x80;
+			irq_pending = false;
+			irq_changed();
+			return result;
+		}
+		if ( addr == 0x5205 )
+			return (multiplier_a * multiplier_b) & 0xFF;
+		if ( addr == 0x5206 )
+			return (multiplier_a * multiplier_b) >> 8;
+		return -1;
+	}
+
+	virtual void end_frame( nes_time_t end_time )
+	{
+		run_until( end_time );
+		start_frame();
+	}
+
 	virtual bool write_intercepted( nes_time_t time, nes_addr_t addr, int data )
 	{
 		int reg = addr - regs_addr;
@@ -91,19 +168,19 @@ public:
 				mirror_manual( data & 3, data >> 2 & 3,
 						data >> 4 & 3, data >> 6 & 3 );
 				break;
-			
+
 			case 0x15:
 				set_prg_bank( 0x8000, bank_16k, data >> 1 & 0x3f );
 				break;
-			
+
 			case 0x16:
 				set_prg_bank( 0xC000, bank_8k, data & 0x7f );
 				break;
-			
+
 			case 0x17:
 				set_prg_bank( 0xE000, bank_8k, data & 0x7f );
 				break;
-			
+
 			case 0x20:
 			case 0x21:
 			case 0x22:
@@ -118,45 +195,55 @@ public:
 		}
 		else if ( addr == 0x5203 )
 		{
-			irq_time = no_irq;
-			if ( data && data < 240 )
-			{
-				irq_time = (341 * 21 + 128 + (data * 341)) / 3;
-				if ( irq_time < time )
-					irq_time = no_irq;
-			}
+			run_until( time );
+			irq_scanline = data;
 			irq_changed();
 		}
 		else if ( addr == 0x5204 )
 		{
+			run_until( time );
 			irq_enabled = data;
+			if ( !(data & 0x80) )
+				irq_pending = false;
 			irq_changed();
+		}
+		else if ( addr == 0x5205 )
+		{
+			multiplier_a = data;
+		}
+		else if ( addr == 0x5206 )
+		{
+			multiplier_b = data;
 		}
 		else
 		{
 			return false;
 		}
-		
+
 		return true;
 	}
-	
-		void apply_mapping()
+
+	void apply_mapping()
 	{
 		static unsigned char list [] = {
 			0x05, 0x15, 0x16, 0x17,
 			0x20, 0x21, 0x22, 0x23,
 			0x28, 0x29, 0x2a, 0x2b
 		};
-		
+
 		for ( int i = 0; i < (int) sizeof list; i++ )
 			write_intercepted( 0, regs_addr + list [i], regs [list [i]] );
 		intercept_writes( 0x5100, 0x200 );
+		intercept_reads( 0x5200, 0x100 );
+		start_frame();
 	}
 
 	virtual void write( nes_time_t, nes_addr_t, int ) { }
 
-	nes_time_t irq_time;
+	uint8_t irq_scanline;
+	bool irq_pending;
+	nes_time_t next_scanline_time;
+	int current_scanline;
+	uint8_t multiplier_a;
+	uint8_t multiplier_b;
 };
-
-
-
