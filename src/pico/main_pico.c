@@ -586,7 +586,6 @@ static void real_main(void)
                  NESPAD_CLK_PIN, NESPAD_DATA_PIN, NESPAD_LATCH_PIN);
 
     if (rom_loaded) {
-        uint32_t frame_count = 0;
         while (1) {
             /* Wait for vsync AND ensure the previous pending frame was
              * consumed by vsync_cb.  Without the pending_pixels check,
@@ -601,16 +600,8 @@ static void real_main(void)
 
             nespad_read();
             int joypad1 = nespad_to_qnes(nespad_state);
-            /* Ignore Joy2 if all bits set (no controller on GPIO 27) */
-            int joypad2 = (nespad_state2 == 0x555555) ? 0
-                          : nespad_to_qnes(nespad_state2);
-            /* LED debug: ON when any Joy1 button mapped */
-            gpio_put(PICO_DEFAULT_LED_PIN, joypad1 ? 1 : 0);
-            /* Auto-press Start at ~1s to skip title screen */
-            if (frame_count >= 60 && frame_count < 63)
-                joypad1 |= 0x08;
+            int joypad2 = nespad_to_qnes(nespad_state2);
             qnes_emulate_frame(joypad1, joypad2);
-            frame_count++;
 
             /* Push NES audio into DI queue. No padding — produce only what
              * the NES generates. Carry handles 4-sample boundary. Tiny rate
