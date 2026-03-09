@@ -26,6 +26,7 @@
 #include "board_config.h"
 #include "quicknes.h"
 #include "psram_init.h"
+#include "nespad.h"
 #include "ff.h"
 
 /* 16KB stack in main SRAM — scratch_y (4KB) is too small for QuickNES */
@@ -461,6 +462,22 @@ static void __no_inline_not_in_flash_func(set_flash_timings)(int cpu_mhz, int fl
                            divisor << QMI_M0_TIMING_CLKDIV_LSB;
 }
 
+/* Convert nespad button state to QuickNES joypad bitmask.
+ * QuickNES: A=0, B=1, Select=2, Start=3, Up=4, Down=5, Left=6, Right=7 */
+static int nespad_to_qnes(uint32_t pad)
+{
+    int joy = 0;
+    if (pad & DPAD_A)      joy |= 0x01;
+    if (pad & DPAD_B)      joy |= 0x02;
+    if (pad & DPAD_SELECT) joy |= 0x04;
+    if (pad & DPAD_START)  joy |= 0x08;
+    if (pad & DPAD_UP)     joy |= 0x10;
+    if (pad & DPAD_DOWN)   joy |= 0x20;
+    if (pad & DPAD_LEFT)   joy |= 0x40;
+    if (pad & DPAD_RIGHT)  joy |= 0x80;
+    return joy;
+}
+
 static void real_main(void)
 {
     /* Overclock to 378 MHz — same pattern as murmgenesis */
@@ -563,7 +580,10 @@ static void real_main(void)
     video_output_set_scanline_callback(scanline_callback);
     multicore_launch_core1(video_output_core1_run);
     sleep_ms(100);
-    printf("HDMI active\n");
+
+    /* Init NES gamepad PIO driver (after HDMI, matching murmgenesis order) */
+    nespad_begin(clock_get_hz(clk_sys) / 1000,
+                 NESPAD_CLK_PIN, NESPAD_DATA_PIN, NESPAD_LATCH_PIN);
 
     if (rom_loaded) {
         uint32_t frame_count = 0;
@@ -579,8 +599,18 @@ static void real_main(void)
                 __wfe();
             vsync_flag = 0;
 
-            int joypad = (frame_count >= 60 && frame_count < 63) ? 0x08 : 0;
-            qnes_emulate_frame(joypad, 0);
+            nespad_read();
+            int joypad1 = nespad_to_qnes(nespad_state);
+            /* Ignore Joy2 if all bits set (no controller on GPIO 27) */
+            int joypad2 = (nespad_state2 == 0x555555) ? 0
+                          : nespad_to_qnes(nespad_state2);
+            /* LED debug: ON when any Joy1 button mapped */
+            gpio_put(PICO_DEFAULT_LED_PIN, joypad1 ? 1 : 0);
+            /* Auto-press Start at ~1s to skip title screen */
+            if (frame_count >= 60 && frame_count < 63)
+                joypad1 |= 0x08;
+            qnes_emulate_frame(joypad1, joypad2);
+            frame_count++;
 
             /* Push NES audio into DI queue. No padding — produce only what
              * the NES generates. Carry handles 4-sample boundary. Tiny rate
@@ -596,7 +626,6 @@ static void real_main(void)
             pending_pitch = 272;
             pending_pixels = qnes_get_pixels();
 
-            frame_count++;
         }
     } else {
         printf("No ROM loaded (no SD card ROM, no flash ROM).\n");

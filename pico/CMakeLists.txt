@@ -26,6 +26,7 @@ add_compile_definitions(PSRAM_MAX_FREQ_MHZ=${PSRAM_MAX_FREQ_MHZ})
 
 add_subdirectory(${PROJECT_ROOT}/lib/fatfs fatfs)
 add_subdirectory(${DRIVERSDIR}/sdcard sdcard)
+add_subdirectory(${DRIVERSDIR}/nespad nespad)
 add_subdirectory(${DRIVERSDIR}/ps2kbd ps2kbd)
 
 option(USB_HID_ENABLED "Enable USB HID host (disables USB serial)" OFF)
@@ -113,6 +114,7 @@ target_link_libraries(murmnes
     hardware_pll
     pico_hdmi
     sdcard
+    nespad
     ps2kbd
 )
 
