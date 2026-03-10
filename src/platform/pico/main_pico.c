@@ -513,10 +513,21 @@ static void real_main(void)
     vreg_disable_voltage_limit();
     vreg_set_voltage(VREG_VOLTAGE_1_60);
     sleep_ms(10);
+#if USB_HID_ENABLED
+    // Use 252 MHz to get an even divider (2) for the 126 MHz HSTX clock.
+    // Odd dividers (like 3 for 378 MHz) result in a 33% duty cycle, causing HDMI signal drops!
+    set_flash_timings(252, 88);
+    sleep_ms(10);
+    set_sys_clock_khz(252000, true);
+#else
     set_flash_timings(378, 88);
     sleep_ms(10);
-    if (!set_sys_clock_khz(378000, false))
+    if (!set_sys_clock_khz(378000, false)) {
+        set_flash_timings(252, 88);
+        sleep_ms(10);
         set_sys_clock_khz(252000, true);
+    }
+#endif
 
     stdio_init_all();
     gpio_init(PICO_DEFAULT_LED_PIN);
