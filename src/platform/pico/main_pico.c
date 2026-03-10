@@ -217,6 +217,15 @@ void __not_in_flash("scanline") scanline_callback(
 
     /* Each NES line is doubled vertically (480 / 240 = 2) */
     uint32_t nes_line = active_line < 480 ? active_line / 2 : 0;
+
+    /* Crop top and bottom 8 NES scanlines (HDMI lines 0-15 and 464-479)
+     * to hide overscan garbage — same rationale as horizontal cropping. */
+    if (nes_line < 8 || nes_line >= NES_HEIGHT - 8) {
+        for (int i = 32; i < 288; i++)
+            dst[i] = 0;
+        return;
+    }
+
     const uint8_t *src = frame_pixels + nes_line * frame_pitch;
 
     /* Borders (dst[0..31] and dst[288..319]) stay zero from BSS init —
@@ -226,7 +235,7 @@ void __not_in_flash("scanline") scanline_callback(
      * prevalent when scrolling in games like Castlevania 3 and SMB3.
      */
     uint32_t *out = dst + 32;
-    
+
     out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0;
     out[4] = 0; out[5] = 0; out[6] = 0; out[7] = 0;
     out += 8;
