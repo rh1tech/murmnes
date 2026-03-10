@@ -32,7 +32,8 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA */
 
 /* Scanline timing constants (same as MMC3 in mapper004) */
 static int const mmc5_ppu_overclock = 3;
-static nes_time_t const mmc5_first_scanline = 20 * 341 + 268;
+/* MMC5 detects the first scanline at PPU cycle 4 of the first visible scanline. */
+static nes_time_t const mmc5_first_scanline = 21 * 341 + 4;
 static nes_time_t const mmc5_last_scanline = mmc5_first_scanline + 240 * 341;
 
 struct mmc5_state_t
@@ -94,7 +95,8 @@ public:
 		while ( next_scanline_time < end_time && next_scanline_time <= mmc5_last_scanline )
 		{
 			current_scanline++;
-			if ( irq_scanline && current_scanline == irq_scanline && !irq_pending )
+			/* MMC5 increments scanline counter and compares on subsequent scanlines */
+			if ( irq_scanline && current_scanline == irq_scanline + 1 && !irq_pending )
 			{
 				irq_pending = true;
 			}
@@ -115,8 +117,9 @@ public:
 		if ( !ppu_enabled() || !irq_scanline || irq_scanline >= 240 )
 			return no_irq;
 
-		/* Predict when the target scanline will be reached */
-		int remain = irq_scanline - current_scanline - 1;
+		/* Predict when the target scanline will be reached.
+		 * IRQ triggers when current_scanline increments to irq_scanline + 1. */
+		int remain = (irq_scanline + 1) - current_scanline - 1;
 		if ( remain < 0 )
 			return no_irq; /* already passed this frame */
 
