@@ -603,13 +603,14 @@ static void real_main(void)
 
     settings_load();
 
-    /* Pre-load all ROM data from SD before HDMI starts */
+    /* Scan SD for ROMs and load metadata (CRCs, titles) before HDMI starts.
+     * ROM data is loaded on demand when selected. */
     int num_roms = 0;
     long preloaded_rom_size = 0;
     if (psram_available) {
         num_roms = rom_selector_preload(&preloaded_rom_size);
-        /* PSRAM writes dirty the XIP cache — stale entries prevent HSTX
-         * from starting correctly. Invalidate before HDMI init. */
+        /* PSRAM metadata writes dirty the XIP cache — stale entries prevent
+         * HSTX from starting correctly. Invalidate before HDMI init. */
         xip_cache_invalidate_all();
     }
 

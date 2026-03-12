@@ -250,8 +250,6 @@ static uint32_t crc32_file(FIL *fil, int skip) {
 typedef struct {
     char filename[64];
     uint32_t crc;
-    uint32_t rom_psram_offset;  /* offset from PSRAM_BASE where ROM is stored */
-    long rom_size;              /* ROM file size in bytes */
     bool crc_valid;
 } rom_entry_t;
 
@@ -293,6 +291,82 @@ static void ensure_crc(int idx) {
         f_close(&fil);
         printf("CRC32(%s) = %08lX\n", rom_list[idx].filename, (unsigned long)rom_list[idx].crc);
     }
+}
+
+/* ─── CRC cache on SD card ────────────────────────────────────────── */
+
+#define CRC_CACHE_PATH "/nes/.crc_cache"
+#define LAST_ROM_PATH  "/nes/.last_rom"
+
+static void load_crc_cache(void) {
+    FIL fil;
+    if (f_open(&fil, CRC_CACHE_PATH, FA_READ) != FR_OK) return;
+    char line[128];
+    while (f_gets(line, sizeof(line), &fil)) {
+        char *eq = strchr(line, '=');
+        if (!eq) continue;
+        *eq = '\0';
+        uint32_t crc = 0;
+        for (const char *p = eq + 1; *p && *p != '\n' && *p != '\r'; p++) {
+            crc <<= 4;
+            if (*p >= '0' && *p <= '9') crc |= (*p - '0');
+            else if (*p >= 'A' && *p <= 'F') crc |= (*p - 'A' + 10);
+            else if (*p >= 'a' && *p <= 'f') crc |= (*p - 'a' + 10);
+        }
+        for (int i = 0; i < rom_count; i++) {
+            if (strcmp(rom_list[i].filename, line) == 0) {
+                rom_list[i].crc = crc;
+                rom_list[i].crc_valid = true;
+                break;
+            }
+        }
+    }
+    f_close(&fil);
+}
+
+static void save_crc_cache(void) {
+    FIL fil;
+    if (f_open(&fil, CRC_CACHE_PATH, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return;
+    for (int i = 0; i < rom_count; i++) {
+        if (!rom_list[i].crc_valid) continue;
+        char line[128];
+        snprintf(line, sizeof(line), "%s=%08lX\n",
+                 rom_list[i].filename, (unsigned long)rom_list[i].crc);
+        UINT bw;
+        f_write(&fil, line, strlen(line), &bw);
+    }
+    f_close(&fil);
+}
+
+/* ─── Last selected ROM persistence ───────────────────────────────── */
+
+static int last_selected_rom = 0;
+
+static void load_last_rom(void) {
+    FIL fil;
+    if (f_open(&fil, LAST_ROM_PATH, FA_READ) != FR_OK) return;
+    char name[64];
+    if (f_gets(name, sizeof(name), &fil)) {
+        /* Strip trailing newline/CR */
+        size_t len = strlen(name);
+        while (len > 0 && (name[len-1] == '\n' || name[len-1] == '\r'))
+            name[--len] = '\0';
+        for (int i = 0; i < rom_count; i++) {
+            if (strcmp(rom_list[i].filename, name) == 0) {
+                last_selected_rom = i;
+                break;
+            }
+        }
+    }
+    f_close(&fil);
+}
+
+static void save_last_rom(int selected) {
+    FIL fil;
+    if (f_open(&fil, LAST_ROM_PATH, FA_WRITE | FA_CREATE_ALWAYS) != FR_OK) return;
+    f_puts(rom_list[selected].filename, &fil);
+    f_puts("\n", &fil);
+    f_close(&fil);
 }
 
 /* ─── Metadata (titles pre-loaded, images loaded on-the-fly) ──────── */
@@ -629,16 +703,14 @@ static void selector_wait_vsync(void) {
 
 /* ─── Preload: ALL SD access before HDMI starts ───────────────────── */
 
-/* ROM files stored at PSRAM_BASE (0x11000000), packed sequentially.
- * Max 2MB total for all ROMs (tile cache starts at 2MB offset). */
+/* On-demand ROM loading: single ROM loaded to PSRAM base on selection */
 #define ROM_PSRAM_BASE   0x11000000
 #define ROM_PSRAM_MAX    (2 * 1024 * 1024)
-static uint32_t rom_data_offset = 0;  /* running allocation for ROM files */
 
 static int selected_rom_idx = 0;
 
 void *rom_selector_get_rom_data(void) {
-    return (void *)(ROM_PSRAM_BASE + rom_list[selected_rom_idx].rom_psram_offset);
+    return (void *)ROM_PSRAM_BASE;
 }
 
 static void set_rom_name(const char *filename) {
@@ -664,64 +736,29 @@ int rom_selector_preload(long *out_rom_size) {
     printf("ROM selector: found %d ROMs\n", count);
     if (count == 0) { f_unmount(""); return 0; }
 
-    /* Load ALL ROM files into PSRAM sequentially */
-    rom_data_offset = 0;
+    /* Load CRC cache from SD — avoids recomputing on every boot */
+    load_crc_cache();
+
+    /* Compute CRCs only for files not found in the cache */
+    bool cache_dirty = false;
     for (int i = 0; i < rom_count; i++) {
-        char path[ROM_PATH_MAX];
-        snprintf(path, sizeof(path), "/nes/%s", rom_list[i].filename);
-        FIL fil;
-        FRESULT fr = f_open(&fil, path, FA_READ);
-        if (fr == FR_OK) {
-            FSIZE_t fsize = f_size(&fil);
-            if (rom_data_offset + fsize <= ROM_PSRAM_MAX) {
-                uint8_t *dst = (uint8_t *)(ROM_PSRAM_BASE + rom_data_offset);
-                UINT br = 0;
-                FRESULT rr = f_read(&fil, dst, (UINT)fsize, &br);
-                if (rr == FR_OK && br == (UINT)fsize) {
-                    rom_list[i].rom_psram_offset = rom_data_offset;
-                    rom_list[i].rom_size = (long)fsize;
-                    rom_data_offset += (((uint32_t)fsize + 3) & ~3);  /* align */
-                    printf("ROM[%d] %s -> PSRAM+%lu (%lu bytes)\n",
-                           i, rom_list[i].filename,
-                           (unsigned long)rom_list[i].rom_psram_offset,
-                           (unsigned long)fsize);
-                } else {
-                    printf("ROM[%d] %s: read FAILED (fr=%d, got %u/%lu)\n",
-                           i, rom_list[i].filename,
-                           (int)rr, (unsigned)br, (unsigned long)fsize);
-                }
-            } else {
-                printf("ROM[%d] %s: no PSRAM space left (need %lu, have %lu)\n",
-                       i, rom_list[i].filename,
-                       (unsigned long)fsize,
-                       (unsigned long)(ROM_PSRAM_MAX - rom_data_offset));
-            }
-            f_close(&fil);
-        } else {
-            printf("ROM[%d] %s: open FAILED (fr=%d)\n",
-                   i, rom_list[i].filename, (int)fr);
+        if (!rom_list[i].crc_valid) {
+            ensure_crc(i);
+            cache_dirty = true;
         }
     }
+    if (cache_dirty) save_crc_cache();
 
-    /* CRCs + titles (images loaded on-the-fly during selector UI) */
-    for (int i = 0; i < rom_count; i++) {
-        ensure_crc(i);
+    /* Load game titles from metadata */
+    for (int i = 0; i < rom_count; i++)
         load_rom_title(i);
-    }
 
-    /* For single ROM, pre-set the selection */
-    if (count == 1) {
-        selected_rom_idx = 0;
-        set_rom_name(rom_list[0].filename);
-        *out_rom_size = rom_list[0].rom_size;
-    }
+    /* Remember which ROM was last selected */
+    load_last_rom();
 
     f_unmount("");
 
-    /* Flush dirty cache lines to PSRAM so that data survives the
-     * xip_cache_invalidate_all() that main_pico.c calls before HDMI init.
-     * Without this, the last images/metadata written may still be dirty
-     * in the write-back XIP cache and get discarded by the invalidation. */
+    /* Flush PSRAM metadata so it survives xip_cache_invalidate_all() */
     xip_cache_clean_all();
 
     return count;
@@ -740,7 +777,7 @@ bool rom_selector_show(long *out_rom_size) {
     static FATFS show_fs;
     bool sd_ok = (f_mount(&show_fs, "", 1) == FR_OK);
 
-    int selected = 0;
+    int selected = last_selected_rom;
     int prev_buttons = 0;
     uint32_t hold_counter = 0;
     uint32_t frame_count = 0;
@@ -748,8 +785,8 @@ bool rom_selector_show(long *out_rom_size) {
     scroll_dir = 0;
     scroll_frame = 0;
 
-    /* Load first image before entering the loop */
-    if (sd_ok) load_rom_image(0);
+    /* Load cover art for the initial selection */
+    if (sd_ok) load_rom_image(selected);
 
     while (1) {
         selector_wait_vsync();
@@ -806,60 +843,32 @@ bool rom_selector_show(long *out_rom_size) {
             }
 
             if (pressed & (BTN_A | BTN_START)) {
-                /* If preload missed this ROM, try loading it from SD now */
-                if (rom_list[selected].rom_size <= 0 && sd_ok) {
+                /* Load ROM from SD into PSRAM on demand */
+                long loaded_size = 0;
+                if (sd_ok) {
                     char rpath[ROM_PATH_MAX];
                     snprintf(rpath, sizeof(rpath), "/nes/%s",
                              rom_list[selected].filename);
                     FIL rfil;
                     if (f_open(&rfil, rpath, FA_READ) == FR_OK) {
                         FSIZE_t rfsz = f_size(&rfil);
-                        uint32_t aligned_sz = ((uint32_t)rfsz + 3) & ~3;
-                        /* Pick write offset: append after preloaded data if
-                         * possible, otherwise reuse PSRAM from offset 0 and
-                         * invalidate any preloaded ROMs we overwrite. */
-                        uint32_t wr_off = rom_data_offset;
-                        if (rfsz < 16 || rfsz > ROM_PSRAM_MAX) {
-                            /* Invalid size — skip */
-                        } else {
-                            if (wr_off + rfsz > ROM_PSRAM_MAX) {
-                                wr_off = 0;  /* wrap to start */
-                            }
+                        if (rfsz >= 16 && rfsz <= ROM_PSRAM_MAX) {
                             /* Write via uncached PSRAM alias (0x15xxxxxx) so
                              * the XIP cache stays full of Core 1's flash code
-                             * and HDMI output is not disrupted. Data lands in
-                             * PSRAM directly — no clean/flush needed. */
-                            uint8_t *dst = (uint8_t *)(0x15000000 + wr_off);
+                             * and HDMI output is not disrupted. */
+                            uint8_t *dst = (uint8_t *)0x15000000;
                             UINT rbr;
                             if (f_read(&rfil, dst, (UINT)rfsz, &rbr) == FR_OK
                                 && rbr == (UINT)rfsz) {
-                                /* Invalidate preloaded ROMs whose data overlaps */
-                                uint32_t wr_end = wr_off + aligned_sz;
-                                for (int j = 0; j < rom_count; j++) {
-                                    if (j == selected || rom_list[j].rom_size <= 0)
-                                        continue;
-                                    uint32_t ro = rom_list[j].rom_psram_offset;
-                                    uint32_t re = ro + (uint32_t)rom_list[j].rom_size;
-                                    if (ro < wr_end && re > wr_off)
-                                        rom_list[j].rom_size = 0;
-                                }
-                                rom_list[selected].rom_psram_offset = wr_off;
-                                rom_list[selected].rom_size = (long)rfsz;
-                                if (wr_off + aligned_sz > rom_data_offset)
-                                    rom_data_offset = wr_off + aligned_sz;
-                                printf("ROM '%s' loaded on-demand at +%lu (%lu bytes)\n",
-                                       rom_list[selected].filename,
-                                       (unsigned long)wr_off,
-                                       (unsigned long)rfsz);
+                                loaded_size = (long)rfsz;
                             }
                         }
                         f_close(&rfil);
                     }
                 }
-                if (rom_list[selected].rom_size <= 0) {
+                if (loaded_size <= 0) {
                     printf("Selected: %s — load FAILED\n",
                            rom_list[selected].filename);
-                    /* Brief on-screen error, then stay in selector */
                     fb_fill(PAL_BG);
                     fb_text_center(SCREEN_H / 2 - 4, "ROM FAILED TO LOAD", PAL_WHITE);
                     fb_text_center(SCREEN_H / 2 + 10, "CHECK FILE ON SD CARD", PAL_GRAY);
@@ -877,10 +886,12 @@ bool rom_selector_show(long *out_rom_size) {
                     continue;
                 }
                 selected_rom_idx = selected;
+                last_selected_rom = selected;
                 set_rom_name(rom_list[selected].filename);
-                *out_rom_size = rom_list[selected].rom_size;
+                *out_rom_size = loaded_size;
                 printf("Selected: %s (%ld bytes)\n",
-                       rom_list[selected].filename, rom_list[selected].rom_size);
+                       rom_list[selected].filename, loaded_size);
+                save_last_rom(selected);
                 f_unmount("");
                 return true;
             }
