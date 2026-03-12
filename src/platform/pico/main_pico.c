@@ -31,6 +31,7 @@
 #include "nespad.h"
 #include "ps2kbd_wrapper.h"
 #include "settings.h"
+#include "rom_selector.h"
 #include "i2s_audio.h"
 #include "uart_logging.h"
 #include "ff.h"
@@ -255,11 +256,8 @@ void __not_in_flash("scanline") scanline_callback(
 {
     (void)v_scanline;
 
-    /* Each NES line is doubled vertically (480 / 240 = 2) */
     uint32_t nes_line = active_line < 480 ? active_line / 2 : 0;
 
-    /* Crop top and bottom 8 NES scanlines (HDMI lines 0-15 and 464-479)
-     * to hide overscan garbage — same rationale as horizontal cropping. */
     if (nes_line < 8 || nes_line >= NES_HEIGHT - 8) {
         for (int i = 32; i < 288; i++)
             dst[i] = 0;
@@ -267,13 +265,6 @@ void __not_in_flash("scanline") scanline_callback(
     }
 
     const uint8_t *src = frame_pixels + nes_line * frame_pitch;
-
-    /* Borders (dst[0..31] and dst[288..319]) stay zero from BSS init —
-     * line_buffer is static and only this callback writes to it.
-     * We also crop the first 8 and last 8 NES pixels horizontally to hide
-     * edge artifacts (nametable update seams and overscan color borders)
-     * prevalent when scrolling in games like Castlevania 3 and SMB3.
-     */
     uint32_t *out = dst + 32;
 
     out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0;
@@ -604,45 +595,10 @@ static void real_main(void)
         qnes_set_tile_cache_buf(tc, 1 * 1024 * 1024);
     }
 
-    /* Try loading ROM: SD card first, then flash fallback */
-    bool rom_loaded = false;
-
-    {
-        long sd_rom_size = 0;
-        uint8_t *sd_rom = try_load_rom_from_sd(&sd_rom_size);
-        if (sd_rom) {
-            printf("qnes_load_rom_inplace from SD (%ld bytes)...\n", sd_rom_size);
-            if (qnes_load_rom_inplace(sd_rom, sd_rom_size) == 0) {
-                printf("SD ROM loaded OK\n");
-                rom_loaded = true;
-            } else {
-                printf("qnes_load_rom_inplace (SD) FAILED\n");
-            }
-            /* inplace: PRG/CHR point into sd_rom_buf, do NOT free it */
-            if (!rom_loaded && !psram_available && sd_rom_buf)
-                free(sd_rom_buf);
-        }
-    }
-
-#ifdef HAS_NES_ROM
-    if (!rom_loaded) {
-        long rom_size = (long)(nes_rom_end - nes_rom_data);
-        printf("qnes_load_rom_inplace from flash (%ld bytes)...\n", rom_size);
-        if (qnes_load_rom_inplace(nes_rom_data, rom_size) == 0) {
-            printf("Flash ROM loaded OK\n");
-            rom_loaded = true;
-            if (g_rom_name[0] == '\0')
-                snprintf(g_rom_name, sizeof(g_rom_name), "flash_rom");
-        } else {
-            printf("qnes_load_rom_inplace (flash) FAILED\n");
-        }
-    }
-#endif
-
     /* Load settings from SD card (uses defaults if not found) */
     settings_load();
 
-    /* Start HDMI directly — all flash-heavy init is done */
+    /* Start HDMI — needed for ROM selector display */
     frame_pixels = test_pixels;
     frame_pitch = NES_WIDTH;
 
@@ -684,6 +640,86 @@ static void real_main(void)
 #if USB_HID_ENABLED
     usbhid_init();
     printf("USB HID Host initialized\n");
+#endif
+
+    /* ─── ROM loading: selector menu or flash fallback ─────────── */
+    bool rom_loaded = false;
+
+    /* Show ROM selector if PSRAM is available (needed for image cache) */
+    if (psram_available) {
+        long rom_size = 0;
+        printf("Starting ROM selector...\n");
+        if (rom_selector_show(&rom_size)) {
+            /* ROM is already in PSRAM at PSRAM_BASE.
+             * Keep posting the "LOADING..." screen from the selector
+             * while the emulator initializes (mapper ROMs take time). */
+            printf("ROM selected (%ld bytes), initializing emulator...\n", rom_size);
+
+            /* Post video-only frames to keep HDMI alive during init
+             * (no audio DI packets — flooding DI queue can break HSTX) */
+            for (int i = 0; i < 5; i++) {
+                while (pending_pixels != NULL) { __wfe(); }
+                vsync_flag = 0;
+                pending_pitch = NES_WIDTH;
+                pending_pixels = test_pixels;
+            }
+
+            sd_rom_buf = (uint8_t *)PSRAM_BASE;
+            printf("Calling qnes_load_rom_inplace...\n");
+            int ret = qnes_load_rom_inplace(sd_rom_buf, rom_size);
+            printf("qnes_load_rom_inplace returned %d\n", ret);
+
+            if (ret == 0) {
+                printf("Emulator initialized OK\n");
+
+                /* Emulate one frame immediately so the NES palette + pixels
+                 * are ready before entering the main loop. This ensures a
+                 * seamless handoff from the selector's palette to the game. */
+                qnes_emulate_frame(0, 0);
+                update_palette(pal_write_idx);
+                pending_pal_idx = pal_write_idx;
+                pal_write_idx ^= 1;
+
+                /* Post the first real game frame and wait for it to display */
+                while (pending_pixels != NULL) { __wfe(); }
+                pending_pitch = 272;
+                pending_pixels = qnes_get_pixels();
+                while (pending_pixels != NULL) { __wfe(); }
+
+                printf("First frame displayed, entering game loop\n");
+                rom_loaded = true;
+            } else {
+                printf("qnes_load_rom_inplace FAILED (%d)\n", ret);
+            }
+        } else {
+            printf("ROM selector: no ROM selected\n");
+        }
+    }
+
+    /* Fallback: try loading first .nes from SD (no PSRAM / selector failed) */
+    if (!rom_loaded) {
+        long sd_rom_size = 0;
+        uint8_t *sd_rom = try_load_rom_from_sd(&sd_rom_size);
+        if (sd_rom) {
+            if (qnes_load_rom_inplace(sd_rom, sd_rom_size) == 0) {
+                printf("SD ROM loaded (fallback)\n");
+                rom_loaded = true;
+            }
+            if (!rom_loaded && !psram_available && sd_rom_buf)
+                free(sd_rom_buf);
+        }
+    }
+
+#ifdef HAS_NES_ROM
+    if (!rom_loaded) {
+        long rom_size = (long)(nes_rom_end - nes_rom_data);
+        if (qnes_load_rom_inplace(nes_rom_data, rom_size) == 0) {
+            printf("Flash ROM loaded\n");
+            rom_loaded = true;
+            if (g_rom_name[0] == '\0')
+                snprintf(g_rom_name, sizeof(g_rom_name), "flash_rom");
+        }
+    }
 #endif
 
     if (rom_loaded) {
