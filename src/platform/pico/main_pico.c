@@ -661,6 +661,27 @@ static void real_main(void)
     printf("USB HID Host initialized\n");
 #endif
 
+    /* Show welcome screen */
+    welcome_screen_show();
+
+    /* Check SD card availability */
+    {
+        bool sd_ok = false;
+        if (psram_available) {
+            sd_ok = rom_selector_sd_ok();
+        } else {
+            /* Quick SD card check for non-PSRAM path */
+            FATFS tmp_fs;
+            if (f_mount(&tmp_fs, "", 1) == FR_OK) {
+                sd_ok = true;
+                f_unmount("");
+            }
+        }
+        if (!sd_ok) {
+            sd_error_show();
+        }
+    }
+
     while (1) {  /* outer loop: ROM selector → emulation → reset → ROM selector */
 
     /* Show ROM selector */

@@ -53,6 +53,16 @@ extern void audio_fill_silence(int count);
 #define PAL_GRAY       224
 #define PAL_BG         225
 
+/* Welcome screen logo palette entries (226-233 are free) */
+#define PAL_LOGO_LGRAY  226
+#define PAL_LOGO_MGRAY  227
+#define PAL_LOGO_GRAY   228
+#define PAL_LOGO_DGRAY  229
+#define PAL_LOGO_VDGRAY 230
+#define PAL_LOGO_RED    231
+#define PAL_LOGO_CIRCLE 232
+#define PAL_LOGO_SHADOW 233
+
 static const uint8_t cube_levels[6] = {0, 51, 102, 153, 204, 255};
 
 static uint16_t rgb565(uint8_t r, uint8_t g, uint8_t b) {
@@ -162,6 +172,7 @@ static const uint8_t glyphs[][7] = {
     [':'-' '] = {0x00,0x0C,0x0C,0x00,0x0C,0x0C,0x00},
     ['<'-' '] = {0x02,0x04,0x08,0x10,0x08,0x04,0x02},
     ['>'-' '] = {0x08,0x04,0x02,0x01,0x02,0x04,0x08},
+    ['@'-' '] = {0x0E,0x11,0x17,0x15,0x17,0x10,0x0E},
     ['A'-' '] = {0x0E,0x11,0x11,0x1F,0x11,0x11,0x11},
     ['B'-' '] = {0x1E,0x11,0x11,0x1E,0x11,0x11,0x1E},
     ['C'-' '] = {0x0E,0x11,0x10,0x10,0x10,0x11,0x0E},
@@ -257,6 +268,7 @@ typedef struct {
 #define ROMLIST_PSRAM_BASE (0x11000000 + 4 * 1024 * 1024)
 static rom_entry_t *rom_list;  /* -> PSRAM */
 static int rom_count = 0;
+static bool sd_mount_succeeded = false;
 
 static int scan_roms(void) {
     rom_count = 0;
@@ -953,7 +965,11 @@ int rom_selector_preload(long *out_rom_size) {
     memset(rom_meta, 0, MAX_ROMS * sizeof(rom_meta_t));
 
     static FATFS sel_fs;
-    if (f_mount(&sel_fs, "", 1) != FR_OK) return 0;
+    if (f_mount(&sel_fs, "", 1) != FR_OK) {
+        sd_mount_succeeded = false;
+        return 0;
+    }
+    sd_mount_succeeded = true;
 
     int count = scan_roms();
     printf("ROM selector: found %d ROMs\n", count);
@@ -1169,5 +1185,232 @@ bool rom_selector_show(long *out_rom_size) {
             f_unmount("");
             return true;
         }
+    }
+}
+
+/* ─── SD card status ──────────────────────────────────────────────── */
+
+bool rom_selector_sd_ok(void) {
+    return sd_mount_succeeded;
+}
+
+/* ─── NES controller pixel art (26x12) ────────────────────────────── */
+
+/* Extracted from gridded reference image via Python/PIL. Palette:
+ * 0=transparent 1=black 2=white 3=#CBCBC9 4=#BDBDBB
+ * 5=#8F8F8F 6=#716F70 7=#3F3F3F 8=#E50011(red) */
+#define LOGO_W 26
+#define LOGO_H 12
+
+static const uint8_t nes_logo[LOGO_H][LOGO_W] = {
+    {4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4}, /*  0: body top */
+    {4,1,1,1,1,1,1,1,4,4,4,4,4,4,4,4,1,1,1,1,1,1,1,1,1,4}, /*  1: border + center */
+    {4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,8,8,8,8,8,1,1,4}, /*  2: border + red accent */
+    {4,1,1,1,1,1,1,1,4,4,4,4,4,4,4,4,1,1,1,1,1,1,1,1,1,4}, /*  3: border */
+    {4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,4}, /*  4: inner border */
+    {4,1,1,4,4,4,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,4}, /*  5: d-pad top */
+    {4,1,4,4,1,4,4,1,4,4,4,4,4,4,4,4,1,4,4,4,4,4,4,4,1,4}, /*  6: d-pad + body */
+    {4,1,4,1,1,1,4,1,4,1,1,4,4,1,1,4,1,4,8,8,4,8,8,4,1,4}, /*  7: d-pad cross + buttons */
+    {4,1,4,4,1,4,4,1,4,4,4,4,4,4,4,4,1,4,8,8,4,8,8,4,1,4}, /*  8: d-pad + buttons */
+    {4,1,1,4,4,4,1,1,1,1,1,1,1,1,1,1,1,4,4,4,4,4,4,4,1,4}, /*  9: d-pad bottom */
+    {4,1,1,1,1,1,1,1,4,4,4,4,4,4,4,4,1,1,1,1,1,1,1,1,1,4}, /* 10: bottom border */
+    {4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4,4}, /* 11: body bottom */
+};
+
+/* Map logo pixel values (0-8) to framebuffer palette indices */
+static const uint8_t logo_pal_map[9] = {
+    0,                /* 0 = transparent (not drawn) */
+    PAL_BLACK,        /* 1 = black */
+    PAL_WHITE,        /* 2 = white */
+    PAL_LOGO_LGRAY,   /* 3 = light gray #C0 */
+    PAL_LOGO_MGRAY,   /* 4 = medium gray #A0 */
+    PAL_LOGO_GRAY,    /* 5 = gray #80 */
+    PAL_LOGO_DGRAY,   /* 6 = dark gray #60 */
+    PAL_LOGO_VDGRAY,  /* 7 = very dark gray #40 */
+    PAL_LOGO_RED,     /* 8 = red */
+};
+
+/* ─── Welcome screen helpers ──────────────────────────────────────── */
+
+static void setup_welcome_palette(void) {
+    setup_selector_palette();
+    /* Add logo-specific entries to the palette buffer that was just written */
+    int buf = pal_write_idx ^ 1;
+    uint32_t *pal = rgb565_palette_32[buf];
+
+    uint16_t c;
+    c = rgb565(0xCB, 0xCB, 0xC9); pal[PAL_LOGO_LGRAY]  = c | ((uint32_t)c << 16);
+    c = rgb565(0xBD, 0xBD, 0xBB); pal[PAL_LOGO_MGRAY]  = c | ((uint32_t)c << 16);
+    c = rgb565(0x8F, 0x8F, 0x8F); pal[PAL_LOGO_GRAY]    = c | ((uint32_t)c << 16);
+    c = rgb565(0x71, 0x6F, 0x70); pal[PAL_LOGO_DGRAY]   = c | ((uint32_t)c << 16);
+    c = rgb565(0x3F, 0x3F, 0x3F); pal[PAL_LOGO_VDGRAY]  = c | ((uint32_t)c << 16);
+    c = rgb565(0xE5, 0x00, 0x11); pal[PAL_LOGO_RED]     = c | ((uint32_t)c << 16);
+    c = rgb565(0x90, 0x90, 0x90); pal[PAL_LOGO_CIRCLE]  = c | ((uint32_t)c << 16);
+    c = rgb565(0x60, 0x60, 0x60); pal[PAL_LOGO_SHADOW]  = c | ((uint32_t)c << 16);
+}
+
+static void draw_filled_circle(int cx, int cy, int r, uint8_t color) {
+    int r2 = r * r;
+    for (int y = cy - r; y <= cy + r; y++) {
+        if (y < 0 || y >= SCREEN_H) continue;
+        int dy = y - cy;
+        int dx_max_sq = r2 - dy * dy;
+        /* Integer square root to find horizontal span */
+        int dx = 0;
+        while ((dx + 1) * (dx + 1) <= dx_max_sq) dx++;
+        int x0 = cx - dx;
+        int x1 = cx + dx;
+        if (x0 < 0) x0 = 0;
+        if (x1 >= SCREEN_W) x1 = SCREEN_W - 1;
+        if (x0 <= x1) memset(&fb[y * SCREEN_W + x0], color, x1 - x0 + 1);
+    }
+}
+
+static void draw_logo_3x(int ox, int oy) {
+    for (int y = 0; y < LOGO_H; y++) {
+        for (int x = 0; x < LOGO_W; x++) {
+            uint8_t px = nes_logo[y][x];
+            if (px == 0) continue;
+            uint8_t c = logo_pal_map[px];
+            int dx = ox + x * 3;
+            int dy = oy + y * 3;
+            for (int sy = 0; sy < 3; sy++)
+                for (int sx = 0; sx < 3; sx++)
+                    fb_pixel(dx + sx, dy + sy, c);
+        }
+    }
+}
+
+/* Draw an elliptical shadow on the circle surface.
+ * As the controller floats higher (larger bounce), the shadow grows
+ * wider/taller (object further from surface) and gets lighter. */
+static void draw_logo_shadow(int cx, int cy, int bounce, int circle_r) {
+    /* Shadow sits below the controller, on the circle surface */
+    int logo_h_half = (LOGO_H * 3 / 2);
+    int shadow_cy = cy + logo_h_half + 4 - bounce;
+    /* Shadow size: bigger when controller is higher (further from surface) */
+    int base_rx = (LOGO_W * 3 / 2) - 4;
+    int base_ry = 3;
+    int rx = base_rx + (-bounce);
+    int ry = base_ry + (-bounce) / 2;
+    if (rx < 4) rx = 4;
+    if (ry < 2) ry = 2;
+    /* Only draw shadow pixels that are inside the circle */
+    int cr2 = circle_r * circle_r;
+    for (int y = shadow_cy - ry; y <= shadow_cy + ry; y++) {
+        if (y < 0 || y >= SCREEN_H) continue;
+        int dy_s = y - shadow_cy;
+        int dy_c = y - cy;
+        if (dy_c * dy_c > cr2) continue;
+        for (int x = cx - rx; x <= cx + rx; x++) {
+            if (x < 0 || x >= SCREEN_W) continue;
+            int dx_s = x - cx;
+            int dx_c = x - cx;
+            /* Inside ellipse? Skip rows that produce only 1px wide strip */
+            if (dx_s * dx_s * ry * ry + dy_s * dy_s * rx * rx < rx * rx * ry * ry) {
+                /* Inside circle? */
+                if (dx_c * dx_c + dy_c * dy_c <= cr2) {
+                    fb_pixel(x, y, PAL_LOGO_SHADOW);
+                }
+            }
+        }
+    }
+}
+
+/* ─── Welcome screen ──────────────────────────────────────────────── */
+
+void welcome_screen_show(void) {
+    fb = test_pixels;
+    fb_show = sel_backbuf;
+    setup_welcome_palette();
+
+#ifdef MURMNES_VERSION
+    char version_str[16];
+    snprintf(version_str, sizeof(version_str), "V%s", MURMNES_VERSION);
+#else
+    const char *version_str = "V1.00";
+#endif
+
+    uint32_t frame = 0;
+    int prev_buttons = 0xFF;  /* ignore initial button state */
+
+    while (1) {
+        selector_wait_vsync();
+
+        fb_fill(PAL_BG);
+
+        /* Light gray circle behind the logo */
+        int circle_cx = SCREEN_W / 2;
+        int circle_cy = 68;
+        int circle_r = 44;
+        draw_filled_circle(circle_cx, circle_cy, circle_r, PAL_LOGO_CIRCLE);
+
+        /* NES controller with shadow */
+        int logo_x = circle_cx - (LOGO_W * 3 / 2);
+        int logo_y = circle_cy - (LOGO_H * 3 / 2);
+        draw_logo_shadow(circle_cx, circle_cy, 0, circle_r);
+        draw_logo_3x(logo_x, logo_y);
+
+        /* Text */
+        fb_text_center(118, "MURMNES", PAL_WHITE);
+        fb_text_center(132, version_str, PAL_GRAY);
+
+        fb_text_center(152, "BY MIKHAIL MATVEEV", PAL_GRAY);
+        fb_text_center(164, "<XTREME@RH1.TECH>", PAL_GRAY);
+
+        fb_text_center(184, "RH1.TECH", PAL_GRAY);
+
+        /* Blinking "PRESS START" after 2 seconds (120 frames) */
+        if (frame >= 120 && ((frame / 30) & 1) == 0) {
+            fb_text_center(218, "PRESS START", PAL_WHITE);
+        }
+
+        /* Swap buffers and present */
+        uint8_t *tmp = fb;
+        fb = fb_show;
+        fb_show = tmp;
+        audio_fill_silence(SAMPLE_RATE / 60);
+        pending_pitch = SCREEN_W;
+        pending_pixels = fb_show;
+        frame++;
+
+        /* Check input after the initial settle period */
+        if (frame >= 120) {
+            int buttons = read_selector_buttons();
+            int pressed = buttons & ~prev_buttons;
+            prev_buttons = buttons;
+            if (pressed & (BTN_A | BTN_START))
+                break;
+        } else {
+            prev_buttons = read_selector_buttons();
+        }
+
+        /* Auto-continue after 10 seconds */
+        if (frame >= 600)
+            break;
+    }
+}
+
+/* ─── SD card error screen ────────────────────────────────────────── */
+
+void sd_error_show(void) {
+    fb = test_pixels;
+    fb_show = sel_backbuf;
+    /* Palette should already be set from welcome screen */
+
+    for (int i = 0; i < 300; i++) {  /* 5 seconds at 60fps */
+        selector_wait_vsync();
+
+        fb_fill(PAL_BG);
+        fb_text_center(100, "NO SD CARD DETECTED", PAL_WHITE);
+        fb_text_center(120, "INSERT SD CARD WITH .NES FILES", PAL_GRAY);
+        fb_text_center(132, "IN /NES FOLDER AND RESTART", PAL_GRAY);
+
+        uint8_t *tmp = fb;
+        fb = fb_show;
+        fb_show = tmp;
+        audio_fill_silence(SAMPLE_RATE / 60);
+        pending_pitch = SCREEN_W;
+        pending_pixels = fb_show;
     }
 }

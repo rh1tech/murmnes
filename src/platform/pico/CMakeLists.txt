@@ -178,4 +178,10 @@ if(DEFINED NES_ROM_PATH)
     )
 endif()
 
+# Read version from version.txt (format: "MAJOR MINOR", e.g. "1 00" -> "1.00")
+file(READ "${PROJECT_ROOT}/version.txt" MURMNES_VERSION_RAW)
+string(STRIP "${MURMNES_VERSION_RAW}" MURMNES_VERSION_RAW)
+string(REPLACE " " "." MURMNES_VERSION_STR "${MURMNES_VERSION_RAW}")
+target_compile_definitions(murmnes PRIVATE MURMNES_VERSION="${MURMNES_VERSION_STR}")
+
 pico_add_extra_outputs(murmnes)

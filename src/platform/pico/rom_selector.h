@@ -38,6 +38,22 @@ bool rom_selector_show(long *out_rom_size);
  */
 void *rom_selector_get_rom_data(void);
 
+/**
+ * Show the welcome/splash screen. Call AFTER HDMI starts.
+ * Waits for user input or auto-continues after timeout.
+ */
+void welcome_screen_show(void);
+
+/**
+ * Show "No SD Card" error screen for a few seconds.
+ */
+void sd_error_show(void);
+
+/**
+ * Returns true if the SD card was successfully mounted during preload.
+ */
+bool rom_selector_sd_ok(void);
+
 #ifdef __cplusplus
 }
 #endif
