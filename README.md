@@ -277,7 +277,7 @@ Copyright (c) 2026 Mikhail Matveev <<xtreme@rh1.tech>>
 
 This project is licensed under the GNU General Public License v3.0. See [LICENSE](LICENSE) for details.
 
-Note: The QuickNES core is licensed under LGPL-2.1-or-later. The PS/2 keyboard driver is licensed under GPL-2.0-or-later. Other components have their own licenses as noted below.
+Note: The QuickNES core is licensed under LGPL-2.1-or-later. The PS/2 keyboard driver is licensed under GPL-2.0-or-later. The HDMI driver (pico_hdmi) is released under the Unlicense. Other components have their own licenses as noted below.
 
 ## Acknowledgments
 
@@ -287,6 +287,7 @@ This project incorporates code and ideas from the following projects:
 |---------|-----------|---------|----------|
 | [QuickNES](https://github.com/libretro/QuickNES_Core) | Shay Green (blargg) | LGPL-2.1 | NES emulation core |
 | [EMU2413](https://github.com/libretro/QuickNES_Core) | Mitsutaka Okazaki, xodnizel | Custom | VRC7 (YM2413/OPLL) sound emulation |
+| [pico_hdmi](https://github.com/fliperama86/pico_hdmi) | fliperama86 | Unlicense | HSTX-native HDMI output with audio |
 | [FatFS](http://elm-chan.org/fsw/ff/) | ChaN | Custom permissive | FAT32 filesystem for SD card |
 | [pico_fatfs_test](https://github.com/elehobica/pico_fatfs_test) | Elehobica | BSD-2-Clause | SD card PIO-SPI driver |
 | [pico-infonesPlus](https://github.com/shuichi/pico-infonesPlus) | shuichi | MIT | NES/SNES gamepad PIO driver |
@@ -298,6 +299,7 @@ Special thanks to:
 
 - Shay Green (blargg) for the QuickNES emulator core and Blip_Buffer audio library
 - Mitsutaka Okazaki for the EMU2413 OPLL emulator
+- fliperama86 for the pico_hdmi HSTX HDMI output library
 - The libretro team for maintaining the QuickNES fork
 - Nintendo for the original NES hardware
 - The Raspberry Pi Foundation for the RP2350 and Pico SDK
