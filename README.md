@@ -290,7 +290,7 @@ This project incorporates code and ideas from the following projects:
 | [pico_hdmi](https://github.com/fliperama86/pico_hdmi) | fliperama86 | Unlicense | HSTX-native HDMI output with audio |
 | [FatFS](http://elm-chan.org/fsw/ff/) | ChaN | Custom permissive | FAT32 filesystem for SD card |
 | [pico_fatfs_test](https://github.com/elehobica/pico_fatfs_test) | Elehobica | BSD-2-Clause | SD card PIO-SPI driver |
-| [pico-infonesPlus](https://github.com/fhoedemakers/pico-infonesPlus) | shuichitakano, fhoedemakers | MIT | NES/SNES gamepad PIO driver, metadata format |
+| [pico-infonesPlus](https://github.com/fhoedemakers/pico-infonesPlus) | shuichitakano, fhoedemakers | MIT | NES/SNES gamepad PIO driver, game metadata |
 | [PS/2 keyboard driver](https://github.com/mrmltr) | mrmltr | GPL-2.0 | PS/2 keyboard PIO driver |
 | [TinyUSB](https://github.com/hathach/tinyusb) | Ha Thach | MIT | USB HID host driver |
 | [Raspberry Pi Pico SDK](https://github.com/raspberrypi/pico-sdk) | Raspberry Pi Foundation | BSD-3-Clause | Hardware abstraction layer |
@@ -301,7 +301,7 @@ Special thanks to:
 - Mitsutaka Okazaki for the EMU2413 OPLL emulator
 - fliperama86 for the pico_hdmi HSTX HDMI output library
 - shuichitakano for the original pico-infones Pico port and NES gamepad PIO driver
-- fhoedemakers for pico-infonesPlus SD card menu, metadata format, and frontend work
+- fhoedemakers for pico-infonesPlus SD card menu, game metadata, and frontend work
 - The libretro team for maintaining the QuickNES fork
 - Nintendo for the original NES hardware
 - The Raspberry Pi Foundation for the RP2350 and Pico SDK
