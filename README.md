@@ -1,4 +1,4 @@
-# MurmNES
+# FRANK NES
 
 NES (Nintendo Entertainment System) emulator for Raspberry Pi Pico 2 (RP2350) with HDMI output, SD card ROM browser, NES/SNES gamepad, USB gamepad, PS/2 keyboard, and I2S audio support.
 
@@ -14,8 +14,8 @@ Based on [QuickNES](https://github.com/libretro/QuickNES_Core) by Shay Green (bl
 
 This firmware is designed for the **M2** board layout on RP2350-based boards with integrated HDMI, SD card, and PSRAM:
 
-- **[Murmulator](https://murmulator.ru)** – A compact retro-computing platform based on RP Pico 2, designed for emulators and classic games.
 - **[FRANK](https://rh1.tech/projects/frank?area=about)** – A versatile development board based on RP Pico 2 with HDMI output and extensive I/O options.
+- **[Murmulator](https://murmulator.ru)** – A compact retro-computing platform based on RP Pico 2, designed for emulators and classic games.
 
 Both boards provide all necessary peripherals out of the box (no additional wiring required).
 
