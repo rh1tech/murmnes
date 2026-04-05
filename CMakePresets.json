@@ -2,10 +2,21 @@
 	"version": 3,
 	"cmakeMinimumRequired": {
 		"major": 3,
-		"minor": 21,
+		"minor": 13,
 		"patch": 0
 	},
 	"configurePresets": [
+		{
+			"name": "pico2",
+			"displayName": "Pico 2 (RP2350)",
+			"description": "Build for Raspberry Pi Pico 2 (RP2350)",
+			"generator": "Ninja",
+			"binaryDir": "${sourceDir}/build",
+			"cacheVariables": {
+				"PICO_BOARD": "pico2",
+				"USB_HID_ENABLED": "ON"
+			}
+		},
 		{
 			"name": "release",
 			"binaryDir": "${sourceDir}/build/${presetName}"
@@ -63,6 +74,10 @@
 		}
 	],
 	"buildPresets": [
+		{
+			"name": "pico2",
+			"configurePreset": "pico2"
+		},
 		{
 			"name": "release",
 			"configurePreset": "release",

@@ -1,3 +1,33 @@
+# == DO NOT EDIT THE FOLLOWING LINES for the Raspberry Pi Pico VS Code Extension to work ==
+if(WIN32)
+    set(USERHOME $ENV{USERPROFILE})
+else()
+    set(USERHOME $ENV{HOME})
+endif()
+set(sdkVersion 2.2.0)
+set(toolchainVersion 14_2_Rel1)
+set(picotoolVersion 2.2.0-a4)
+set(picoVscode ${USERHOME}/.pico-sdk/cmake/pico-vscode.cmake)
+if (EXISTS ${picoVscode})
+    include(${picoVscode})
+endif()
+# ====================================================================================
+
+cmake_minimum_required(VERSION 3.13)
+
+# --- Pico RP2350 build (when PICO_BOARD is set via preset or command line) ---
+if(PICO_BOARD)
+    include(pico_sdk_import.cmake)
+    project(frank-nes C CXX ASM)
+    set(CMAKE_C_STANDARD 11)
+    set(CMAKE_CXX_STANDARD 17)
+    pico_sdk_init()
+    set(PICO_BUILD_FROM_ROOT TRUE)
+    add_subdirectory(src/platform/pico pico_build)
+    return()
+endif()
+
+# --- Desktop build (default, no PICO_BOARD) ---
 cmake_minimum_required(VERSION 3.24)
 project(cNES LANGUAGES C)
 enable_testing()
