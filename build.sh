@@ -22,8 +22,13 @@ if [ -n "$VIDEO_MODE" ]; then
     CMAKE_OPTS="$CMAKE_OPTS -DVIDEO_MODE=$VIDEO_MODE"
 fi
 
-# USB HID host mode (always enabled — UART used for logging)
-CMAKE_OPTS="$CMAKE_OPTS -DUSB_HID_ENABLED=ON"
+# USB HID host mode (enabled by default — UART used for logging)
+# Usage: USB_HID=0 ./build.sh  to disable
+if [ "${USB_HID:-1}" != "0" ]; then
+    CMAKE_OPTS="$CMAKE_OPTS -DUSB_HID_ENABLED=ON"
+else
+    CMAKE_OPTS="$CMAKE_OPTS -DUSB_HID_ENABLED=OFF"
+fi
 
 mkdir -p "$BUILD_DIR"
 cd "$BUILD_DIR"

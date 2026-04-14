@@ -277,7 +277,7 @@ static uint32_t crc32_file(FIL *fil, int skip) {
 
 /* ─── ROM list (allocated in PSRAM to save SRAM) ──────────────────── */
 
-#define MAX_ROMS 128
+#define MAX_ROMS 512
 
 typedef struct {
     char filename[64];
@@ -994,16 +994,26 @@ int rom_selector_preload(long *out_rom_size) {
 
     int count = scan_roms();
     printf("ROM selector: found %d ROMs\n", count);
+    if (count > 0) {
+        printf("  [0] = '%s'\n", rom_list[0].filename);
+        if (count > 1) printf("  [1] = '%s'\n", rom_list[1].filename);
+    }
     if (count == 0) { f_unmount(""); return 0; }
 
     /* Load CRC cache from SD — avoids recomputing on every boot */
     load_crc_cache();
 
-    /* Compute CRCs only for files not found in the cache */
+    /* Compute CRCs incrementally — limit per boot to avoid stalling
+     * when hundreds of new ROMs are added at once.  The cache file
+     * accumulates across boots so all ROMs eventually get CRCs. */
+    #define CRC_BATCH_SIZE 16
     bool cache_dirty = false;
+    int crc_computed = 0;
     for (int i = 0; i < rom_count; i++) {
         if (!rom_list[i].crc_valid) {
+            if (crc_computed >= CRC_BATCH_SIZE) break;
             ensure_crc(i);
+            crc_computed++;
             cache_dirty = true;
         }
     }

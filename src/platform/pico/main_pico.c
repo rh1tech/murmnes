@@ -554,21 +554,12 @@ static void real_main(void)
     vreg_disable_voltage_limit();
     vreg_set_voltage(VREG_VOLTAGE_1_60);
     sleep_ms(10);
-#if USB_HID_ENABLED
     // Use 252 MHz to get an even divider (2) for the 126 MHz HSTX clock.
     // Odd dividers (like 3 for 378 MHz) result in a 33% duty cycle, causing HDMI signal drops!
+    // This also keeps pll_usb at 48 MHz so USB CDC serial console works.
     set_flash_timings(252, 88);
     sleep_ms(10);
     set_sys_clock_khz(252000, true);
-#else
-    set_flash_timings(378, 88);
-    sleep_ms(10);
-    if (!set_sys_clock_khz(378000, false)) {
-        set_flash_timings(252, 88);
-        sleep_ms(10);
-        set_sys_clock_khz(252000, true);
-    }
-#endif
 
     stdio_init_all();
     uart_logging_init();
@@ -626,22 +617,11 @@ static void real_main(void)
     video_output_set_vsync_callback(vsync_cb);
     video_output_init(FRAME_WIDTH, FRAME_HEIGHT);
 
-#if USB_HID_ENABLED
-    /* If USB HID is enabled, we MUST leave pll_usb at 48 MHz for TinyUSB.
-     * Derive clk_hstx from pll_sys instead to avoid clk_sys mux jitter!
-     * pll_sys is either 378 MHz or 252 MHz, we configure divider for 126 MHz. */
+    /* Derive clk_hstx from pll_sys (252 MHz / 2 = 126 MHz).
+     * pll_usb stays at 48 MHz for USB CDC serial and TinyUSB. */
     clock_configure(clk_hstx, 0,
                     CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
                     clock_get_hz(clk_sys), 126000000);
-#else
-    /* Override HSTX clock: PLL_USB reconfigured to 126 MHz.
-     * Independent of sys_clk — works at any CPU speed. */
-    pll_deinit(pll_usb);
-    pll_init(pll_usb, 1, 756000000, 6, 1); /* 12 × 63 / 6 = 126 MHz */
-    clock_configure(clk_hstx, 0,
-                    CLOCKS_CLK_HSTX_CTRL_AUXSRC_VALUE_CLKSRC_PLL_USB,
-                    126000000, 126000000);
-#endif
 
     pico_hdmi_set_audio_sample_rate(SAMPLE_RATE);
     video_output_set_scanline_callback(scanline_callback);

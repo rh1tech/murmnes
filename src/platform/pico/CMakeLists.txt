@@ -149,6 +149,7 @@ target_link_libraries(frank-nes
     hardware_gpio
     hardware_pio
     hardware_pll
+    hardware_xip_cache
     pico_hdmi
     sdcard
     nespad
@@ -157,8 +158,10 @@ target_link_libraries(frank-nes
 
 if(USB_HID_ENABLED)
     target_link_libraries(frank-nes usbhid)
+    pico_enable_stdio_usb(frank-nes 0)
+else()
+    pico_enable_stdio_usb(frank-nes 1)
 endif()
-pico_enable_stdio_usb(frank-nes 0)
 pico_enable_stdio_uart(frank-nes 0)
 target_link_libraries(frank-nes hardware_uart)
 
