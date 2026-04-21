@@ -14,6 +14,7 @@
 #include "hardware/watchdog.h"
 #include "hardware/xip_cache.h"
 #include <string.h>
+#include <stdlib.h>
 #include <stdio.h>
 
 #ifdef USB_HID_ENABLED
@@ -291,6 +292,18 @@ static rom_entry_t *rom_list;  /* -> PSRAM */
 static int rom_count = 0;
 static bool sd_mount_succeeded = false;
 
+static int strcasecmp_rom(const void *a, const void *b) {
+    const rom_entry_t *ra = (const rom_entry_t *)a;
+    const rom_entry_t *rb = (const rom_entry_t *)b;
+    const char *sa = ra->filename, *sb = rb->filename;
+    for (;; sa++, sb++) {
+        int ca = (*sa >= 'a' && *sa <= 'z') ? *sa - 32 : *sa;
+        int cb = (*sb >= 'a' && *sb <= 'z') ? *sb - 32 : *sb;
+        if (ca != cb) return ca - cb;
+        if (ca == 0) return 0;
+    }
+}
+
 static int scan_roms(void) {
     rom_count = 0;
     DIR dir;
@@ -311,6 +324,8 @@ static int scan_roms(void) {
         rom_count++;
     }
     f_closedir(&dir);
+    if (rom_count > 1)
+        qsort(rom_list, rom_count, sizeof(rom_entry_t), strcasecmp_rom);
     return rom_count;
 }
 
@@ -1431,15 +1446,13 @@ void welcome_screen_show(void) {
         frame++;
 
         /* Check input after the initial settle period */
+        int buttons = read_selector_buttons();
         if (frame >= 120) {
-            int buttons = read_selector_buttons();
             int pressed = buttons & ~prev_buttons;
-            prev_buttons = buttons;
-            if (pressed & (BTN_A | BTN_START))
+            if (pressed)
                 break;
-        } else {
-            prev_buttons = read_selector_buttons();
         }
+        prev_buttons = buttons;
 
         /* Auto-continue after 10 seconds */
         if (frame >= 600)

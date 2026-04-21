@@ -135,6 +135,10 @@ void nespad_read_finish(void)
      * 0x10=Up, 0x20=Down, 0x40=Left, 0x80=Right. */
     uint8_t buttons = (raw >> 24) ^ 0xFF;
 
+    /* All 8 buttons pressed at once is physically impossible —
+     * treat it as no controller connected (floating data line). */
+    if (buttons == 0xFF) buttons = 0x00;
+
     uint32_t state = 0;
     if (buttons & 0x01) state |= DPAD_A;
     if (buttons & 0x02) state |= DPAD_B;

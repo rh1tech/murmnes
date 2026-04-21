@@ -630,7 +630,6 @@ static void real_main(void)
     if (psram_available && num_roms > 0) {
         rom_selector_preload_init_display();
         rom_selector_preload_index();
-        xip_cache_clean_all();
     }
 
     /* Init NES gamepad PIO driver (after HDMI, matching murmgenesis order) */
