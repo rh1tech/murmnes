@@ -75,8 +75,17 @@ static unsigned char hid_to_nes(uint8_t code) {
         // ESC = Settings menu / Back
         case 0x29: return NES_KEY_ESC;    // Escape
 
+        // F11 = File browser
+        case 0x44: return NES_KEY_F11;    // F11
+
         // F12 = Settings menu
         case 0x45: return NES_KEY_F12;    // F12
+
+        // Navigation keys
+        case 0x4B: return NES_KEY_PGUP;   // Page Up
+        case 0x4E: return NES_KEY_PGDN;   // Page Down
+        case 0x4A: return NES_KEY_HOME;   // Home
+        case 0x4D: return NES_KEY_END;    // End
 
         default: return 0;
     }
@@ -133,6 +142,11 @@ static uint16_t key_to_state_bit(uint8_t key) {
         case NES_KEY_START:  return KBD_STATE_START;
         case NES_KEY_ESC:    return KBD_STATE_ESC;
         case NES_KEY_F12:    return KBD_STATE_F12;
+        case NES_KEY_F11:    return KBD_STATE_F11;
+        case NES_KEY_PGUP:   return KBD_STATE_PGUP;
+        case NES_KEY_PGDN:   return KBD_STATE_PGDN;
+        case NES_KEY_HOME:   return KBD_STATE_HOME;
+        case NES_KEY_END:    return KBD_STATE_END;
         default: return 0;
     }
 }

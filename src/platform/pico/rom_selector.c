@@ -311,6 +311,7 @@ static int scan_roms(void) {
     FILINFO fno;
     while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0] != '\0' && rom_count < MAX_ROMS) {
         if (fno.fattrib & AM_DIR) continue;
+        if (fno.fname[0] == '.') continue;
         size_t len = strlen(fno.fname);
         if (len < 4) continue;
         if ((fno.fname[len-4] != '.') ||
@@ -856,7 +857,7 @@ static void draw_selector_text(int selected) {
     if (info_state == INFO_SHOWN)
         fb_text_center(SCREEN_H - 16, "< DOWN >   A: START", PAL_GRAY);
     else if (info_state == INFO_HIDDEN)
-        fb_text_center(SCREEN_H - 16, "< LEFT/RIGHT/UP >   A: START", PAL_GRAY);
+        fb_text_center(SCREEN_H - 16, "< LEFT/RIGHT/UP/F11 >  A: START", PAL_GRAY);
 }
 
 /* ─── Animation ───────────────────────────────────────────────────── */
@@ -916,34 +917,52 @@ static void draw_scene(int selected, int bounce_idx) {
 
 /* ─── Input ───────────────────────────────────────────────────────── */
 
-#define BTN_LEFT  0x01
-#define BTN_RIGHT 0x02
-#define BTN_A     0x04
-#define BTN_START 0x08
-#define BTN_UP    0x10
-#define BTN_DOWN  0x20
+#define BTN_LEFT   0x01
+#define BTN_RIGHT  0x02
+#define BTN_A      0x04
+#define BTN_START  0x08
+#define BTN_UP     0x10
+#define BTN_DOWN   0x20
+#define BTN_SELECT 0x40
+#define BTN_B      0x80
+#define BTN_F11    0x100
+#define BTN_PGUP   0x200
+#define BTN_PGDN   0x400
+#define BTN_HOME   0x800
+#define BTN_END    0x1000
+#define BTN_ESC    0x2000
 
 static int read_selector_buttons(void) {
     nespad_read();
     ps2kbd_tick();
     int buttons = 0;
     uint32_t pad = nespad_state | nespad_state2;
-    if (pad & DPAD_LEFT)  buttons |= BTN_LEFT;
-    if (pad & DPAD_RIGHT) buttons |= BTN_RIGHT;
-    if (pad & DPAD_UP)    buttons |= BTN_UP;
-    if (pad & DPAD_DOWN)  buttons |= BTN_DOWN;
-    if (pad & DPAD_A)     buttons |= BTN_A;
-    if (pad & DPAD_START) buttons |= BTN_START;
+    if (pad & DPAD_LEFT)   buttons |= BTN_LEFT;
+    if (pad & DPAD_RIGHT)  buttons |= BTN_RIGHT;
+    if (pad & DPAD_UP)     buttons |= BTN_UP;
+    if (pad & DPAD_DOWN)   buttons |= BTN_DOWN;
+    if (pad & DPAD_A)      buttons |= BTN_A;
+    if (pad & DPAD_B)      buttons |= BTN_B;
+    if (pad & DPAD_START)  buttons |= BTN_START;
+    if (pad & DPAD_SELECT) buttons |= BTN_SELECT;
     uint16_t kbd = ps2kbd_get_state();
 #ifdef USB_HID_ENABLED
     kbd |= usbhid_get_kbd_state();
 #endif
-    if (kbd & KBD_STATE_LEFT)  buttons |= BTN_LEFT;
-    if (kbd & KBD_STATE_RIGHT) buttons |= BTN_RIGHT;
-    if (kbd & KBD_STATE_UP)    buttons |= BTN_UP;
-    if (kbd & KBD_STATE_DOWN)  buttons |= BTN_DOWN;
-    if (kbd & KBD_STATE_A)     buttons |= BTN_A;
-    if (kbd & KBD_STATE_START) buttons |= BTN_START;
+    if (kbd & KBD_STATE_LEFT)   buttons |= BTN_LEFT;
+    if (kbd & KBD_STATE_RIGHT)  buttons |= BTN_RIGHT;
+    if (kbd & KBD_STATE_UP)     buttons |= BTN_UP;
+    if (kbd & KBD_STATE_DOWN)   buttons |= BTN_DOWN;
+    if (kbd & KBD_STATE_A)      buttons |= BTN_A;
+    if (kbd & KBD_STATE_B)      buttons |= BTN_B;
+    if (kbd & KBD_STATE_START)  buttons |= BTN_START;
+    if (kbd & KBD_STATE_SELECT) buttons |= BTN_SELECT;
+    if (kbd & KBD_STATE_F11)    buttons |= BTN_F11;
+    if (kbd & KBD_STATE_PGUP)   buttons |= BTN_PGUP;
+    if (kbd & KBD_STATE_PGDN)   buttons |= BTN_PGDN;
+    if (kbd & KBD_STATE_HOME)   buttons |= BTN_HOME;
+    if (kbd & KBD_STATE_END)    buttons |= BTN_END;
+    if (kbd & KBD_STATE_ESC)    buttons |= BTN_ESC;
 #ifdef USB_HID_ENABLED
     if (usbhid_gamepad_connected()) {
         usbhid_gamepad_state_t gp;
@@ -953,7 +972,9 @@ static int read_selector_buttons(void) {
         if (gp.dpad & 0x04) buttons |= BTN_LEFT;
         if (gp.dpad & 0x08) buttons |= BTN_RIGHT;
         if (gp.buttons & 0x01) buttons |= BTN_A;
+        if (gp.buttons & 0x02) buttons |= BTN_B;
         if (gp.buttons & 0x40) buttons |= BTN_START;
+        if (gp.buttons & 0x20) buttons |= BTN_SELECT;
     }
 #endif
     return buttons;
@@ -1072,6 +1093,288 @@ void rom_selector_preload_index(void) {
     xip_cache_clean_all();
 }
 
+/* ─── File browser mode ──────────────────────────────────────────── */
+
+#define FB_MAX_ENTRIES 256
+#define FB_VISIBLE_LINES 20
+#define FB_LIST_Y 31
+#define FB_LINE_H 9
+#define FB_NAME_X 4
+#define FB_NAME_MAX_CHARS 37
+
+typedef struct {
+    char name[64];
+    bool is_dir;
+    uint32_t size;
+} fb_entry_t;
+
+static fb_entry_t *fb_entries;
+static int fb_entry_count;
+
+static bool is_nes_file(const char *name) {
+    size_t len = strlen(name);
+    if (len < 4) return false;
+    return (name[len-4] == '.') &&
+           (name[len-3] == 'n' || name[len-3] == 'N') &&
+           (name[len-2] == 'e' || name[len-2] == 'E') &&
+           (name[len-1] == 's' || name[len-1] == 'S');
+}
+
+static int strcasecmp_fb(const void *a, const void *b) {
+    const fb_entry_t *ea = (const fb_entry_t *)a;
+    const fb_entry_t *eb = (const fb_entry_t *)b;
+    /* Directories before files */
+    if (ea->is_dir != eb->is_dir) return ea->is_dir ? -1 : 1;
+    const char *sa = ea->name, *sb = eb->name;
+    for (;; sa++, sb++) {
+        int ca = (*sa >= 'a' && *sa <= 'z') ? *sa - 32 : *sa;
+        int cb = (*sb >= 'a' && *sb <= 'z') ? *sb - 32 : *sb;
+        if (ca != cb) return ca - cb;
+        if (ca == 0) return 0;
+    }
+}
+
+static int fb_scan_dir(const char *path) {
+    fb_entry_count = 0;
+    DIR dir;
+    if (f_opendir(&dir, path) != FR_OK) return 0;
+
+    /* ".." entry to go up (unless at root) */
+    int sort_start = 0;
+    if (strlen(path) > 1) {
+        strcpy(fb_entries[0].name, "..");
+        fb_entries[0].is_dir = true;
+        fb_entries[0].size = 0;
+        fb_entry_count = 1;
+        sort_start = 1;
+    }
+
+    FILINFO fno;
+    while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0] != '\0'
+           && fb_entry_count < FB_MAX_ENTRIES) {
+        if (fno.fname[0] == '.') continue;
+        bool is_dir = (fno.fattrib & AM_DIR) != 0;
+        if (!is_dir && !is_nes_file(fno.fname)) continue;
+        strncpy(fb_entries[fb_entry_count].name, fno.fname,
+                sizeof(fb_entries[0].name) - 1);
+        fb_entries[fb_entry_count].name[sizeof(fb_entries[0].name) - 1] = '\0';
+        fb_entries[fb_entry_count].is_dir = is_dir;
+        fb_entries[fb_entry_count].size = (uint32_t)fno.fsize;
+        fb_entry_count++;
+    }
+    f_closedir(&dir);
+    if (fb_entry_count - sort_start > 1)
+        qsort(&fb_entries[sort_start], fb_entry_count - sort_start,
+              sizeof(fb_entry_t), strcasecmp_fb);
+    return fb_entry_count;
+}
+
+static void fb_text_trunc(int x, int y, const char *s, uint8_t color, int max_chars) {
+    int len = (int)strlen(s);
+    if (len <= max_chars) {
+        fb_text(x, y, s, color);
+    } else {
+        int cut = max_chars - 3;
+        if (cut < 0) cut = 0;
+        for (int i = 0; i < cut && s[i]; i++)
+            fb_char(x + i * 6, y, s[i], color);
+        for (int i = 0; i < 3 && cut + i < max_chars; i++)
+            fb_char(x + (cut + i) * 6, y, '.', color);
+    }
+}
+
+static void fb_draw_browser(const char *path, int selected, int scroll) {
+    fb_fill(PAL_BG);
+
+    /* Header: current path (inside overscan margins) */
+    fb_text_trunc(10, 13, path, PAL_WHITE, (SCREEN_W - 20) / 6);
+    fb_hline(0, 22, SCREEN_W, PAL_GRAY);
+
+    /* File list */
+    int list_bottom = SCREEN_H - 24;
+    bool has_scrollbar = fb_entry_count > FB_VISIBLE_LINES;
+    int sb_x = SCREEN_W - 12;
+    int text_right = has_scrollbar ? sb_x - 2 : SCREEN_W - 4;
+
+    for (int i = 0; i < FB_VISIBLE_LINES && (scroll + i) < fb_entry_count; i++) {
+        int idx = scroll + i;
+        fb_entry_t *e = &fb_entries[idx];
+        int y = FB_LIST_Y + i * FB_LINE_H;
+        if (y + 7 > list_bottom) break;
+        uint8_t color = PAL_GRAY;
+
+        if (idx == selected) {
+            fb_rect(0, y - 1, text_right, FB_LINE_H, PAL_CART_DARK);
+            color = PAL_WHITE;
+        }
+
+        int name_x;
+        if (e->is_dir) {
+            fb_text(FB_NAME_X, y, "<DIR>", PAL_CART_LIGHT);
+            name_x = FB_NAME_X + 36;
+        } else {
+            char sz[6];
+            uint32_t kb = (e->size + 1023) / 1024;
+            if (kb < 1000)
+                snprintf(sz, sizeof(sz), "%4luK", (unsigned long)kb);
+            else
+                snprintf(sz, sizeof(sz), "%4luM", (unsigned long)(kb / 1024));
+            fb_text(FB_NAME_X, y, sz, PAL_CART_LIGHT);
+            name_x = FB_NAME_X + 36;
+        }
+        int name_max = (text_right - name_x) / 6;
+        fb_text_trunc(name_x, y, e->name, color, name_max);
+    }
+
+    /* Scrollbar (right of text area) */
+    if (has_scrollbar) {
+        int bar_h = list_bottom - FB_LIST_Y;
+        int thumb_h = bar_h * FB_VISIBLE_LINES / fb_entry_count;
+        if (thumb_h < 8) thumb_h = 8;
+        int max_scroll = fb_entry_count - FB_VISIBLE_LINES;
+        int thumb_y = FB_LIST_Y;
+        if (max_scroll > 0)
+            thumb_y += (bar_h - thumb_h) * scroll / max_scroll;
+        fb_rect(sb_x, FB_LIST_Y, 4, bar_h, PAL_CART_SLOT);
+        fb_rect(sb_x, thumb_y, 4, thumb_h, PAL_WHITE);
+    }
+
+    /* Footer (above overscan margin) */
+    fb_hline(0, SCREEN_H - 22, SCREEN_W, PAL_GRAY);
+    fb_text_center(SCREEN_H - 19, "A/ENTER:OPEN  B/ESC:BACK", PAL_GRAY);
+}
+
+static bool file_browser_show(long *out_rom_size) {
+    fb = test_pixels;
+    fb_show = sel_backbuf;
+    setup_selector_palette();
+
+    /* Allocate entry list in PSRAM scratch area (after metadata) */
+    fb_entries = (fb_entry_t *)(ROMMETA_PSRAM_BASE + MAX_ROMS * sizeof(rom_meta_t));
+
+    static FATFS browser_fs;
+    bool sd_ok = (f_mount(&browser_fs, "", 1) == FR_OK);
+    if (!sd_ok) return false;
+
+    char cur_path[256];
+    strcpy(cur_path, "/nes");
+    fb_scan_dir(cur_path);
+
+    int selected = 0;
+    int scroll = 0;
+    int prev_buttons = read_selector_buttons();
+    uint32_t hold_counter = 0;
+
+    while (1) {
+        selector_wait_vsync();
+
+        fb_draw_browser(cur_path, selected, scroll);
+
+        uint8_t *tmp = fb;
+        fb = fb_show;
+        fb_show = tmp;
+        audio_fill_silence(SAMPLE_RATE / 60);
+        pending_pitch = SCREEN_W;
+        pending_pixels = fb_show;
+
+        int buttons = read_selector_buttons();
+        int pressed = buttons & ~prev_buttons;
+        if (buttons != 0 && buttons == prev_buttons) {
+            hold_counter++;
+            if (hold_counter > 20 && (hold_counter % 3) == 0)
+                pressed = buttons & (BTN_UP | BTN_DOWN | BTN_PGUP | BTN_PGDN);
+        } else {
+            hold_counter = 0;
+        }
+        prev_buttons = buttons;
+
+        /* F11, ESC, B, or Select+Start: back to carousel */
+        if (pressed & (BTN_F11 | BTN_ESC | BTN_B))
+            break;
+        if ((pressed & BTN_SELECT) && (buttons & BTN_START))
+            break;
+        if ((pressed & BTN_START) && (buttons & BTN_SELECT))
+            break;
+
+        /* Navigation */
+        if (pressed & BTN_UP) {
+            if (selected > 0) selected--;
+        }
+        if (pressed & BTN_DOWN) {
+            if (selected < fb_entry_count - 1) selected++;
+        }
+        if (pressed & BTN_PGUP) {
+            selected -= FB_VISIBLE_LINES;
+            if (selected < 0) selected = 0;
+        }
+        if (pressed & BTN_PGDN) {
+            selected += FB_VISIBLE_LINES;
+            if (selected >= fb_entry_count) selected = fb_entry_count - 1;
+        }
+        if (pressed & BTN_HOME) selected = 0;
+        if (pressed & BTN_END) selected = fb_entry_count - 1;
+
+        /* Keep selection visible */
+        if (selected < scroll) scroll = selected;
+        if (selected >= scroll + FB_VISIBLE_LINES)
+            scroll = selected - FB_VISIBLE_LINES + 1;
+
+
+
+        /* A / Enter: open directory or load .nes file */
+        if ((pressed & (BTN_A | BTN_START)) && fb_entry_count > 0) {
+            fb_entry_t *e = &fb_entries[selected];
+
+            if (e->is_dir) {
+                if (strcmp(e->name, "..") == 0) {
+                    char *last_slash = strrchr(cur_path, '/');
+                    if (last_slash && last_slash != cur_path)
+                        *last_slash = '\0';
+                    else
+                        strcpy(cur_path, "/");
+                } else {
+                    size_t plen = strlen(cur_path);
+                    if (plen == 1 && cur_path[0] == '/')
+                        snprintf(cur_path + plen, sizeof(cur_path) - plen,
+                                 "%s", e->name);
+                    else
+                        snprintf(cur_path + plen, sizeof(cur_path) - plen,
+                                 "/%s", e->name);
+                }
+                fb_scan_dir(cur_path);
+                selected = 0;
+                scroll = 0;
+            } else if (is_nes_file(e->name)) {
+                /* Load the ROM */
+                char rpath[ROM_PATH_MAX];
+                snprintf(rpath, sizeof(rpath), "%s/%s", cur_path, e->name);
+                long loaded_size = 0;
+                FIL rfil;
+                if (f_open(&rfil, rpath, FA_READ) == FR_OK) {
+                    FSIZE_t rfsz = f_size(&rfil);
+                    if (rfsz >= 16 && rfsz <= ROM_PSRAM_MAX) {
+                        uint8_t *dst = (uint8_t *)0x15000000;
+                        UINT rbr;
+                        if (f_read(&rfil, dst, (UINT)rfsz, &rbr) == FR_OK
+                            && rbr == (UINT)rfsz)
+                            loaded_size = (long)rfsz;
+                    }
+                    f_close(&rfil);
+                }
+                if (loaded_size > 0) {
+                    set_rom_name(e->name);
+                    *out_rom_size = loaded_size;
+                    f_unmount("");
+                    return true;
+                }
+            }
+        }
+    }
+
+    f_unmount("");
+    return false;
+}
+
 /* ─── Show: images loaded from SD on-the-fly ──────────────────────── */
 
 bool rom_selector_show(long *out_rom_size) {
@@ -1149,6 +1452,21 @@ bool rom_selector_show(long *out_rom_size) {
             hold_counter = 0;
         }
         prev_buttons = buttons;
+
+        /* F11 or Select+Start: switch to file browser */
+        bool sel_start = ((pressed & BTN_SELECT) && (buttons & BTN_START))
+                      || ((pressed & BTN_START) && (buttons & BTN_SELECT));
+        if ((pressed & BTN_F11) || sel_start) {
+            f_unmount("");
+            if (file_browser_show(out_rom_size))
+                return true;
+            /* Returned without selecting — remount and continue carousel */
+            sd_ok = (f_mount(&show_fs, "", 1) == FR_OK);
+            cur_img_idx = -1;
+            if (sd_ok) load_rom_image(selected);
+            prev_buttons = read_selector_buttons();
+            continue;
+        }
 
         /* Info panel: UP opens, DOWN closes */
         if (info_state == INFO_HIDDEN && scroll_dir == 0 && (pressed & BTN_UP)) {

@@ -530,7 +530,19 @@ static uint16_t hid_to_kbd_state_bit(uint8_t keycode) {
         
         // ESC = Settings menu
         case 0x29: return 0x0100; // Escape -> KBD_STATE_ESC
-        
+
+        // F11 = File browser
+        case 0x44: return 0x0400; // F11 -> KBD_STATE_F11
+
+        // F12 = Settings menu
+        case 0x45: return 0x0200; // F12 -> KBD_STATE_F12
+
+        // Navigation keys
+        case 0x4B: return 0x0800; // Page Up -> KBD_STATE_PGUP
+        case 0x4E: return 0x1000; // Page Down -> KBD_STATE_PGDN
+        case 0x4A: return 0x2000; // Home -> KBD_STATE_HOME
+        case 0x4D: return 0x4000; // End -> KBD_STATE_END
+
         default: return 0;
     }
 }
