@@ -956,7 +956,35 @@ static void selector_wait_vsync(void) {
     vsync_flag = 0;
 }
 
-/* ─── Preload: ALL SD access before HDMI starts ───────────────────── */
+/* ─── Preload: SD scanning, CRC computation, metadata loading ─────── */
+
+static void show_indexing_progress(const char *label, int current, int total) {
+    if (pending_pixels != NULL) return;
+
+    fb_fill(PAL_BG);
+    fb_text_center(104, label, PAL_WHITE);
+
+    int bar_w = 180;
+    int bar_h = 10;
+    int bar_x = (SCREEN_W - bar_w) / 2;
+    int bar_y = 122;
+    fb_rect(bar_x - 1, bar_y - 1, bar_w + 2, bar_h + 2, PAL_GRAY);
+    fb_rect(bar_x, bar_y, bar_w, bar_h, PAL_BLACK);
+    int fill_w = (total > 0) ? (current * bar_w / total) : 0;
+    if (fill_w > 0)
+        fb_rect(bar_x, bar_y, fill_w, bar_h, PAL_WHITE);
+
+    char count_str[32];
+    snprintf(count_str, sizeof(count_str), "%d / %d", current, total);
+    fb_text_center(140, count_str, PAL_GRAY);
+
+    uint8_t *tmp = fb;
+    fb = fb_show;
+    fb_show = tmp;
+    audio_fill_silence(SAMPLE_RATE / 60);
+    pending_pitch = SCREEN_W;
+    pending_pixels = fb_show;
+}
 
 /* On-demand ROM loading: single ROM loaded to PSRAM base on selection */
 #define ROM_PSRAM_BASE   0x11000000
@@ -977,15 +1005,22 @@ static void set_rom_name(const char *filename) {
     g_rom_name[nlen] = '\0';
 }
 
-int rom_selector_preload(long *out_rom_size) {
+void rom_selector_preload_init_display(void) {
+    fb = test_pixels;
+    fb_show = sel_backbuf;
+    setup_selector_palette();
+}
+
+static FATFS preload_fs;
+
+int rom_selector_preload_scan(long *out_rom_size) {
     *out_rom_size = 0;
     rom_list = (rom_entry_t *)ROMLIST_PSRAM_BASE;
     rom_meta = (rom_meta_t *)ROMMETA_PSRAM_BASE;
     memset(rom_list, 0, MAX_ROMS * sizeof(rom_entry_t));
     memset(rom_meta, 0, MAX_ROMS * sizeof(rom_meta_t));
 
-    static FATFS sel_fs;
-    if (f_mount(&sel_fs, "", 1) != FR_OK) {
+    if (f_mount(&preload_fs, "", 1) != FR_OK) {
         sd_mount_succeeded = false;
         return 0;
     }
@@ -995,32 +1030,31 @@ int rom_selector_preload(long *out_rom_size) {
     printf("ROM selector: found %d ROMs\n", count);
     if (count == 0) { f_unmount(""); return 0; }
 
-    /* Load CRC cache from SD — avoids recomputing on every boot */
     load_crc_cache();
 
-    /* Compute CRCs for any ROMs not found in the cache */
+    xip_cache_clean_all();
+    return count;
+}
+
+void rom_selector_preload_index(void) {
     bool cache_dirty = false;
     for (int i = 0; i < rom_count; i++) {
         if (!rom_list[i].crc_valid) {
             ensure_crc(i);
             cache_dirty = true;
         }
+        show_indexing_progress("INDEXING ROMS...", i + 1, rom_count);
     }
     if (cache_dirty) save_crc_cache();
 
-    /* Load game titles from metadata */
-    for (int i = 0; i < rom_count; i++)
+    for (int i = 0; i < rom_count; i++) {
         load_rom_title(i);
+        show_indexing_progress("LOADING METADATA...", i + 1, rom_count);
+    }
 
-    /* Remember which ROM was last selected */
     load_last_rom();
-
     f_unmount("");
-
-    /* Flush PSRAM metadata so it survives xip_cache_invalidate_all() */
     xip_cache_clean_all();
-
-    return count;
 }
 
 /* ─── Show: images loaded from SD on-the-fly ──────────────────────── */

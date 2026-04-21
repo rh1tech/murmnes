@@ -595,14 +595,11 @@ static void real_main(void)
 
     settings_load();
 
-    /* Scan SD for ROMs and load metadata (CRCs, titles) before HDMI starts.
-     * ROM data is loaded on demand when selected. */
+    /* Phase 1: scan SD directory and load CRC cache (fast, no HDMI needed) */
     int num_roms = 0;
     long preloaded_rom_size = 0;
     if (psram_available) {
-        num_roms = rom_selector_preload(&preloaded_rom_size);
-        /* PSRAM metadata writes dirty the XIP cache — stale entries prevent
-         * HSTX from starting correctly. Invalidate before HDMI init. */
+        num_roms = rom_selector_preload_scan(&preloaded_rom_size);
         xip_cache_invalidate_all();
     }
 
@@ -628,6 +625,13 @@ static void real_main(void)
     video_output_set_scanline_callback(scanline_callback);
     multicore_launch_core1(video_output_core1_run);
     sleep_ms(100);
+
+    /* Phase 2: CRC computation + metadata loading with progress display */
+    if (psram_available && num_roms > 0) {
+        rom_selector_preload_init_display();
+        rom_selector_preload_index();
+        xip_cache_clean_all();
+    }
 
     /* Init NES gamepad PIO driver (after HDMI, matching murmgenesis order) */
     nespad_begin(clock_get_hz(clk_sys) / 1000,

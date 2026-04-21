@@ -17,13 +17,25 @@ extern "C" {
 #define ROM_PATH_MAX 280
 
 /**
- * Scan SD card for ROMs and load metadata (CRCs, titles).
- * ROM data is NOT loaded — it will be loaded on demand when selected.
- * Call BEFORE HDMI starts.
+ * Phase 1: Mount SD, scan /nes for .nes files, load CRC cache.
+ * Fast — no per-file I/O. Call BEFORE HDMI starts.
  * @param out_rom_size  Unused (always set to 0), kept for API compat
  * @return Number of ROMs found
  */
-int rom_selector_preload(long *out_rom_size);
+int rom_selector_preload_scan(long *out_rom_size);
+
+/**
+ * Initialize framebuffer and palette for the preload progress screen.
+ * Call AFTER HDMI starts but BEFORE rom_selector_preload_index().
+ */
+void rom_selector_preload_init_display(void);
+
+/**
+ * Phase 2: Compute missing CRCs, load metadata, remember last ROM.
+ * Slow — shows progress bar on screen. Call AFTER HDMI starts.
+ * SD is already mounted from preload_scan; unmounted on return.
+ */
+void rom_selector_preload_index(void);
 
 /**
  * Show the ROM selector UI. Loads the selected ROM from SD on demand.
