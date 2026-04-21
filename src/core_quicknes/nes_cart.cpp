@@ -113,9 +113,9 @@ const char * Nes_Cart::load_ines( Auto_File_Reader in )
 	if ( 0 != memcmp( h.signature, "NES\x1A", 4 ) )
 		return not_ines_file;
 	
-	if ( h.zero [7] ) // handle header defaced by a fucking idiot's handle
+	if ( h.zero [7] && (h.flags2 & 0x0C) != 0x08 )
 		h.flags2 = 0;
-	
+
 	set_mapper( h.flags, h.flags2 );
 	
 	if ( h.flags & 0x04 ) // skip trainer
@@ -142,7 +142,7 @@ const char * Nes_Cart::load_ines_data( const void* data, long size )
 	memcpy( &h, p, sizeof h );
 	p += 16;
 
-	if ( h.zero [7] )
+	if ( h.zero [7] && (h.flags2 & 0x0C) != 0x08 )
 		h.flags2 = 0;
 
 	set_mapper( h.flags, h.flags2 );
