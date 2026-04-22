@@ -15,7 +15,8 @@
 #define PS2_PIN_CLK   14
 #define PS2_PIN_DATA  15
 
-/* SD Card (PIO-SPI) */
+/* SD Card (hardware SPI1 — pins above 29 require SPI1) */
+#define SDCARD_SPI_BUS       spi1
 #define SDCARD_PIN_SPI0_SCK  30
 #define SDCARD_PIN_SPI0_MOSI 31
 #define SDCARD_PIN_SPI0_MISO 40

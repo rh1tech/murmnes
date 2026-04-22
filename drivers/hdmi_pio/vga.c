@@ -363,6 +363,9 @@ void graphics_init(void) {
 
         txt_palette[i] = c & 0x3f | 0xc0;
     }
+#if VGA_BASE_PIN >= 16
+    pio_set_gpio_base(PIO_VGA, 16);
+#endif
     /* Initialize PIO */
     const uint offset = pio_add_program(PIO_VGA, &pio_program_VGA);
     _SM_VGA = pio_claim_unused_sm(PIO_VGA, true);

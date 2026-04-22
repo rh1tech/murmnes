@@ -39,7 +39,7 @@ endif()
 
 set(PROJECT_ROOT ${CMAKE_CURRENT_LIST_DIR}/../../..)
 set(SRCDIR ${PROJECT_ROOT}/src)
-set(DRIVERSDIR ${SRCDIR}/drivers)
+set(DRIVERSDIR ${PROJECT_ROOT}/drivers)
 set(COREDIR ${SRCDIR}/core_quicknes)
 set(EMU2413DIR ${SRCDIR}/emu2413)
 set(PICODIR ${SRCDIR}/platform/pico)
@@ -236,6 +236,11 @@ endif()
 
 target_compile_definitions(frank-nes PRIVATE HAS_NESPAD=1)
 
+if(PLATFORM STREQUAL "z0")
+    target_compile_definitions(frank-nes PRIVATE SDCARD_SPI_BUS=spi1)
+    target_link_libraries(frank-nes hardware_spi)
+endif()
+
 # C++ flags: no exceptions, no RTTI (saves flash/RAM)
 # -mno-unaligned-access: QuickNES casts byte* to uint32_t* for tile cache,
 # which can produce misaligned pointers. LDRD faults on unaligned on Cortex-M33.
@@ -248,6 +253,14 @@ target_compile_options(frank-nes PRIVATE
     -Wno-unused-parameter
 )
 
+if(HDMI_PIO)
+    set(VIDEO_LIB hdmi_pio)
+elseif(VIDEO_COMPOSITE)
+    set(VIDEO_LIB tv_driver)
+else()
+    set(VIDEO_LIB pico_hdmi)
+endif()
+
 target_link_libraries(frank-nes
     pico_stdlib
     pico_multicore
@@ -259,19 +272,11 @@ target_link_libraries(frank-nes
     hardware_pll
     hardware_pwm
     hardware_xip_cache
+    ${VIDEO_LIB}
     sdcard
+    nespad
     ps2kbd
 )
-
-target_link_libraries(frank-nes nespad)
-
-if(HDMI_PIO)
-    target_link_libraries(frank-nes hdmi_pio)
-elseif(VIDEO_COMPOSITE)
-    target_link_libraries(frank-nes tv_driver)
-else()
-    target_link_libraries(frank-nes pico_hdmi)
-endif()
 
 if(USB_HID_ENABLED)
     target_link_libraries(frank-nes usbhid)

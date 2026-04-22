@@ -771,22 +771,22 @@ static int ps2kbd_to_qnes(uint16_t kbd)
 
 static void real_main(void)
 {
-#if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO)
-    /* Overclock to 378 MHz for composite TV / PIO HDMI mode */
-    vreg_disable_voltage_limit();
-    vreg_set_voltage(VREG_VOLTAGE_1_60);
-    sleep_ms(10);
-    set_flash_timings(378, 88);
-    sleep_ms(10);
-    set_sys_clock_khz(378000, true);
-#else
-    /* Overclock to 252 MHz — even divider (2) for 126 MHz HSTX clock */
+#if !defined(VIDEO_COMPOSITE) && !defined(HDMI_PIO)
+    /* HSTX: 252 MHz, HSTX clock = 252 / 2 = 126 MHz */
     vreg_disable_voltage_limit();
     vreg_set_voltage(VREG_VOLTAGE_1_60);
     sleep_ms(10);
     set_flash_timings(252, 88);
     sleep_ms(10);
     set_sys_clock_khz(252000, true);
+#else
+    /* PIO HDMI / composite TV: 378 MHz */
+    vreg_disable_voltage_limit();
+    vreg_set_voltage(VREG_VOLTAGE_1_60);
+    sleep_ms(10);
+    set_flash_timings(378, 88);
+    sleep_ms(10);
+    set_sys_clock_khz(378000, true);
 #endif
 
     stdio_init_all();

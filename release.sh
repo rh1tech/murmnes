@@ -5,14 +5,14 @@
 # Usage: ./release.sh [VERSION]
 #   VERSION  - version string (e.g. "1.01"), prompted interactively if omitted
 #
-# Output format: frank-nes_A_BB_<platform>_<video>.uf2
+# Output format: <prefix>frank-nes_A_BB_<video>.uf2
 #
 # Build matrix (8 variants):
-#   m2: hdmi_hstx, hdmi_vga, tv
-#   m1: hdmi_vga, tv
-#   pc: hdmi_hstx
-#   dv: hdmi_vga
-#   z0: hdmi_vga
+#   m2p2_frank-nes_*_hdmi_hstx, m2p2_*_hdmi_vga, m2p2_*_tv
+#   m1p2_frank-nes_*_hdmi_vga, m1p2_*_tv
+#   pcp2_frank-nes_*_hdmi_hstx
+#   dvp2_frank-nes_*_hdmi_vga
+#   z0p2_frank-nes_*_hdmi_vga
 #
 
 set -e
@@ -27,16 +27,16 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
 
-# Build matrix: "platform:video_suffix:cmake_video_flags"
+# Build matrix: "platform:prefix:video_suffix:cmake_video_flags"
 BUILD_MATRIX=(
-    "m2:hdmi_hstx:"
-    "m2:hdmi_vga:-DHDMI_PIO=ON"
-    "m2:tv:-DVIDEO_COMPOSITE=ON"
-    "m1:hdmi_vga:"
-    "m1:tv:-DVIDEO_COMPOSITE=ON"
-    "pc:hdmi_hstx:"
-    "dv:hdmi_vga:"
-    "z0:hdmi_vga:"
+    "m2:m2p2_:hdmi_hstx:"
+    "m2:m2p2_:hdmi_vga:-DHDMI_PIO=ON"
+    "m2:m2p2_:tv:-DVIDEO_COMPOSITE=ON"
+    "m1:m1p2_:hdmi_vga:"
+    "m1:m1p2_:tv:-DVIDEO_COMPOSITE=ON"
+    "pc:pcp2_:hdmi_hstx:"
+    "dv:dvp2_:hdmi_vga:"
+    "z0:z0p2_:hdmi_vga:"
 )
 
 # Version file
@@ -118,9 +118,9 @@ SUCCEEDED=()
 FAILED=()
 
 for ENTRY in "${BUILD_MATRIX[@]}"; do
-    IFS=':' read -r PLAT VIDEO_SUFFIX CMAKE_VIDEO_FLAGS <<< "$ENTRY"
-    LABEL="${PLAT}_${VIDEO_SUFFIX}"
-    OUTPUT_NAME="frank-nes_${VERSION}_${LABEL}.uf2"
+    IFS=':' read -r PLAT PREFIX VIDEO_SUFFIX CMAKE_VIDEO_FLAGS <<< "$ENTRY"
+    LABEL="${PREFIX}_${VIDEO_SUFFIX}"
+    OUTPUT_NAME="${PREFIX}frank-nes_${VERSION}_${VIDEO_SUFFIX}.uf2"
 
     echo ""
     echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -145,7 +145,7 @@ for ENTRY in "${BUILD_MATRIX[@]}"; do
             if [[ -f "frank-nes.uf2" ]]; then
                 cp "frank-nes.uf2" "$RELEASE_DIR/$OUTPUT_NAME"
                 echo -e "  ${GREEN}✓ $LABEL${NC} → release/$OUTPUT_NAME"
-                SUCCEEDED+=("$LABEL")
+                SUCCEEDED+=("$OUTPUT_NAME")
             else
                 echo -e "  ${RED}✗ $LABEL: UF2 not found${NC}"
                 FAILED+=("$LABEL")
@@ -177,37 +177,12 @@ fi
 
 echo ""
 echo "Release files:"
-for LABEL in "${SUCCEEDED[@]}"; do
-    OUTPUT_NAME="frank-nes_${VERSION}_${LABEL}.uf2"
-    ls -la "$RELEASE_DIR/$OUTPUT_NAME" 2>/dev/null | awk '{printf "  %-55s (%s bytes)\n", $9, $5}'
+for FNAME in "${SUCCEEDED[@]}"; do
+    ls -la "$RELEASE_DIR/$FNAME" 2>/dev/null | awk '{printf "  %-55s (%s bytes)\n", $9, $5}'
 done
 echo ""
 echo -e "Version: ${CYAN}${VERSION_DOT}${NC}"
 
 if [[ ${#FAILED[@]} -gt 0 ]]; then
     echo -e "${YELLOW}Warning: ${#FAILED[@]} variant(s) failed to build${NC}"
-fi
-
-# Create GitHub release and upload all UF2s
-if [[ ${#SUCCEEDED[@]} -gt 0 ]]; then
-    TAG="v${VERSION_DOT}"
-    echo ""
-    echo -e "${CYAN}Creating GitHub release: ${TAG}${NC}"
-
-    RELEASE_FILES=()
-    for LABEL in "${SUCCEEDED[@]}"; do
-        RELEASE_FILES+=("$RELEASE_DIR/frank-nes_${VERSION}_${LABEL}.uf2")
-    done
-
-    if gh release create "$TAG" "${RELEASE_FILES[@]}" \
-        --title "Version ${VERSION_DOT}" \
-        --generate-notes; then
-        echo -e "${GREEN}✓ GitHub release created: ${TAG}${NC}"
-    else
-        echo -e "${YELLOW}⚠ GitHub release failed (you can upload manually)${NC}"
-    fi
-fi
-
-if [[ ${#FAILED[@]} -gt 0 ]]; then
-    exit 1
 fi

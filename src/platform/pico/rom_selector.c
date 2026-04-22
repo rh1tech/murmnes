@@ -2288,23 +2288,17 @@ void welcome_screen_show(void) {
 /* ─── SD card error screen ────────────────────────────────────────── */
 
 void sd_error_show(void) {
+    setup_selector_palette();
+
     fb = test_pixels;
-    fb_show = sel_backbuf;
-    /* Palette should already be set from welcome screen */
+    fb_fill(PAL_BG);
+    fb_text_center(SCREEN_H / 2 - 20, "SD CARD ERROR", PAL_WHITE);
+    fb_text_center(SCREEN_H / 2, "NO SD CARD DETECTED", PAL_GRAY);
+    fb_text_center(SCREEN_H / 2 + 36, "INSERT FAT32 SD CARD", PAL_WHITE);
+    fb_text_center(SCREEN_H / 2 + 48, "AND RESET THE DEVICE", PAL_WHITE);
 
-    for (int i = 0; i < 300; i++) {  /* 5 seconds at 60fps */
-        selector_wait_vsync();
+    audio_fill_silence(SAMPLE_RATE / 60);
+    video_post_frame(fb, SCREEN_W);
 
-        fb_fill(PAL_BG);
-        fb_text_center(100, "NO SD CARD DETECTED", PAL_WHITE);
-        fb_text_center(120, "INSERT SD CARD WITH .NES FILES", PAL_GRAY);
-        fb_text_center(132, "IN /NES FOLDER AND RESTART", PAL_GRAY);
-
-        uint8_t *tmp = fb;
-        fb = fb_show;
-        fb_show = tmp;
-        audio_fill_silence(SAMPLE_RATE / 60);
-        pending_pitch = SCREEN_W;
-        video_post_frame(fb_show, SCREEN_W);
-    }
+    while (1) { tight_loop_contents(); }
 }
