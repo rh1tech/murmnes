@@ -78,6 +78,7 @@ typedef enum {
     MENU_SEPARATOR1,
     MENU_AUDIO,
     MENU_VOLUME,
+    MENU_MODE,
     MENU_SEPARATOR2,
     MENU_SAVE_GAME,
     MENU_LOAD_GAME,
@@ -101,6 +102,9 @@ static const char *input_mode_names[] = {"ANY", "NES GAMEPAD 1", "NES GAMEPAD 2"
 /* Audio mode names */
 static const char *audio_mode_names[] = {"HDMI", "I2S", "PWM", "DISABLED"};
 
+/* Emulation mode names */
+static const char *emu_mode_names[] = {"NES", "DENDY"};
+
 /* Global settings */
 settings_t g_settings = {
     .p1_mode = INPUT_MODE_ANY,
@@ -112,6 +116,7 @@ settings_t g_settings = {
 #endif
     .volume = 100,
     .selector_mode = SELECTOR_MODE_CAROUSEL,
+    .emu_mode = EMULATION_MODE_NES,
 };
 
 /* Local copy for editing */
@@ -253,6 +258,7 @@ static const char *get_menu_label(menu_item_t item) {
         case MENU_PLAYER2:   return "PLAYER 2";
         case MENU_AUDIO:     return "AUDIO";
         case MENU_VOLUME:    return "VOLUME";
+        case MENU_MODE:      return "MODE";
         case MENU_SAVE_GAME: return (status_frames > 0) ? status_msg : "SAVE GAME";
         case MENU_LOAD_GAME: return "LOAD GAME";
         case MENU_RESET:     return "BACK TO ROM SELECTOR";
@@ -290,6 +296,7 @@ static const char *get_value_text(menu_item_t item) {
         case MENU_VOLUME:
             snprintf(volume_text_buf, sizeof(volume_text_buf), "%d%%", edit_settings.volume);
             return volume_text_buf;
+        case MENU_MODE:    return emu_mode_names[edit_settings.emu_mode];
         default:           return NULL;
     }
 }
@@ -359,6 +366,10 @@ static void change_value(menu_item_t item, int dir) {
             if (v < VOLUME_MIN) v = VOLUME_MIN;
             if (v > VOLUME_MAX) v = VOLUME_MAX;
             edit_settings.volume = (uint8_t)v;
+            break;
+        }
+        case MENU_MODE: {
+            edit_settings.emu_mode = (uint8_t)((edit_settings.emu_mode + EMULATION_MODE_COUNT + dir) % EMULATION_MODE_COUNT);
             break;
         }
         default:
@@ -801,6 +812,12 @@ void settings_load(void) {
             if (v >= VOLUME_MIN && v <= VOLUME_MAX)
                 g_settings.volume = (uint8_t)v;
         }
+        else if (parse_ini_line(line, "mode", value, sizeof(value))) {
+            if (strcmp(value, "dendy") == 0 || strcmp(value, "1") == 0)
+                g_settings.emu_mode = EMULATION_MODE_DENDY;
+            else
+                g_settings.emu_mode = EMULATION_MODE_NES;
+        }
         else if (parse_ini_line(line, "selector", value, sizeof(value))) {
             if (strcmp(value, "browser") == 0 || strcmp(value, "1") == 0)
                 g_settings.selector_mode = SELECTOR_MODE_BROWSER;
@@ -828,17 +845,20 @@ void settings_save(void) {
 
     char buf[256];
     static const char *selector_mode_ini_names[] = {"carousel", "browser"};
+    static const char *emu_mode_ini_names[] = {"nes", "dendy"};
     snprintf(buf, sizeof(buf),
         "; FRANK NES Settings\n"
         "player1 = %s\n"
         "player2 = %s\n"
         "audio = %s\n"
         "volume = %d\n"
+        "mode = %s\n"
         "selector = %s\n",
         input_mode_ini_names[g_settings.p1_mode],
         input_mode_ini_names[g_settings.p2_mode],
         audio_mode_ini_names[g_settings.audio_mode],
         g_settings.volume,
+        emu_mode_ini_names[g_settings.emu_mode < EMULATION_MODE_COUNT ? g_settings.emu_mode : 0],
         selector_mode_ini_names[g_settings.selector_mode & 1]);
 
     UINT bw;

@@ -29,6 +29,10 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA */
 
 int const sound_fade_size = 384;
 
+// Region-configurable defaults (NTSC)
+int Nes_Emu::frame_rate = 60;
+long Nes_Emu::cpu_clock_rate = 1789773;
+
 // Constants are manually duplicated in Nes_Emu so their value can be seen
 // directly, rather than having to look in Nes_Ppu.h. "0 +" converts to int.
 BOOST_STATIC_ASSERT( Nes_Emu::image_width  == 0 + Nes_Ppu::image_width );
@@ -283,7 +287,7 @@ const char * Nes_Emu::set_sample_rate( long rate, class Nes_Effects_Buffer* buf 
 
 void Nes_Emu::set_frame_rate( double rate )
 {
-	sound_buf->clock_rate( (long) (1789773 / 60.0 * rate) );
+	sound_buf->clock_rate( (long) ((double)cpu_clock_rate / (double)frame_rate * rate) );
 }
 
 const char * Nes_Emu::set_sample_rate( long rate, Multi_Buffer* new_buf )

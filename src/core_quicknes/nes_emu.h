@@ -169,8 +169,10 @@ public:
 
 // Graphics
 
-	// Number of frames generated per second
-	enum { frame_rate = 60 };
+	// Number of frames generated per second (60 for NTSC, 50 for Dendy)
+	static int frame_rate;
+	// CPU clock rate (1789773 for NTSC, 1773447 for Dendy)
+	static long cpu_clock_rate;
 
 	// Size of fixed NES color table (including the 8 color emphasis modes)
 	enum { color_table_size = 8 * 64 };

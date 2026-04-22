@@ -37,12 +37,18 @@
 #define SELECTOR_MODE_CAROUSEL 0
 #define SELECTOR_MODE_BROWSER  1
 
+// Emulation mode (region)
+#define EMULATION_MODE_NES   0
+#define EMULATION_MODE_DENDY 1
+#define EMULATION_MODE_COUNT 2
+
 typedef struct {
     uint8_t p1_mode;        // Player 1 input mode (INPUT_MODE_*)
     uint8_t p2_mode;        // Player 2 input mode (INPUT_MODE_*)
     uint8_t audio_mode;     // Audio output (AUDIO_MODE_*)
     uint8_t volume;         // Master volume 0-100
     uint8_t selector_mode;  // ROM selector view (SELECTOR_MODE_*)
+    uint8_t emu_mode;       // Emulation mode (EMULATION_MODE_*)
 } settings_t;
 
 extern settings_t g_settings;

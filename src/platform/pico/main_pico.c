@@ -927,6 +927,11 @@ static void real_main(void)
 
     /* Show ROM selector */
     rom_loaded = false;
+
+    /* Apply emulation region before loading any ROM */
+    qnes_set_region(g_settings.emu_mode == EMULATION_MODE_DENDY
+                    ? QNES_REGION_DENDY : QNES_REGION_NTSC);
+
     if (num_roms > 0) {
         long rom_size = 0;
         if (rom_selector_show(&rom_size)) {

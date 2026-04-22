@@ -38,26 +38,47 @@ ppu_time_t const scanline_len = Nes_Ppu::scanline_len;
 nes_time_t const fixed_sprite_max_time = 0; // 1 * ((21 + 164) * scanline_len + 100) / ppu_overclock;
 int const sprite_max_cpu_offset = 2420 + 3;
 
-ppu_time_t const t_to_v_time = 20 * scanline_len + 302;
-ppu_time_t const even_odd_time = 20 * scanline_len + 328;
+static ppu_time_t t_to_v_time = 20 * scanline_len + 302;
+static ppu_time_t even_odd_time = 20 * scanline_len + 328;
 
-ppu_time_t const first_scanline_time = 21 * scanline_len + 60; // this can be varied
-ppu_time_t const first_hblank_time = 21 * scanline_len + 252;
+static ppu_time_t first_scanline_time = 21 * scanline_len + 60;
+static ppu_time_t first_hblank_time = 21 * scanline_len + 252;
 
 ppu_time_t const earliest_sprite_max = sprite_max_cpu_offset * ppu_overclock;
-ppu_time_t const earliest_sprite_hit = 21 * scanline_len + 339; // needs to be 22 * scanline_len when fixed_sprite_max_time is set
+static ppu_time_t earliest_sprite_hit = 21 * scanline_len + 339;
 
-nes_time_t const vbl_end_time = 2272;
-ppu_time_t const max_frame_length = 262 * scanline_len;
-//ppu_time_t const max_frame_length = 320 * scanline_len; // longer frame for testing movie resync
-nes_time_t const earliest_vbl_end_time = max_frame_length / ppu_overclock - 10;
+static nes_time_t vbl_end_time = 2272;
+static ppu_time_t max_frame_length = 262 * scanline_len;
+static nes_time_t earliest_vbl_end_time = max_frame_length / ppu_overclock - 10;
+
+extern "C" void ppu_set_region(int region)
+{
+    if (region == 1) {
+        t_to_v_time          = 51 * scanline_len + 302;
+        even_odd_time        = 51 * scanline_len + 328;
+        first_scanline_time  = 52 * scanline_len + 60;
+        first_hblank_time    = 52 * scanline_len + 252;
+        earliest_sprite_hit  = 52 * scanline_len + 339;
+        vbl_end_time         = (51 * scanline_len) / ppu_overclock;
+        max_frame_length     = 312 * scanline_len;
+    } else {
+        t_to_v_time          = 20 * scanline_len + 302;
+        even_odd_time        = 20 * scanline_len + 328;
+        first_scanline_time  = 21 * scanline_len + 60;
+        first_hblank_time    = 21 * scanline_len + 252;
+        earliest_sprite_hit  = 21 * scanline_len + 339;
+        vbl_end_time         = 2272;
+        max_frame_length     = 262 * scanline_len;
+    }
+    earliest_vbl_end_time = max_frame_length / ppu_overclock - 10;
+}
 
 // Scanline rendering
 
 void __attribute__((section(".time_critical.Nes_Ppu_render_bg_until_"))) Nes_Ppu::render_bg_until_( nes_time_t cpu_time )
 {
 	ppu_time_t time = ppu_time( cpu_time );
-	ppu_time_t const frame_duration = scanline_len * 261;
+	ppu_time_t const frame_duration = max_frame_length - scanline_len;
 	if ( time > frame_duration )
 		time = frame_duration;
 	
@@ -110,7 +131,9 @@ void __attribute__((section(".time_critical.Nes_Ppu_render_bg_until_"))) Nes_Ppu
 		
 		int start = scanline_count;
 		scanline_count += count;
-		draw_background( start, count );
+		int draw_count = (start < image_height) ? (start + count > image_height ? image_height - start : count) : 0;
+		if ( draw_count > 0 )
+			draw_background( start, draw_count );
 		
 		vram_addr = saved_vaddr; // to do: this is cheap
 		run_hblank( count - 1 );
@@ -141,7 +164,9 @@ void __attribute__((section(".time_critical.Nes_Ppu_render_until_"))) Nes_Ppu::r
 		if ( count > 0 )
 		{
 			next_sprites_scanline += count;
-			draw_sprites( start, count );
+			int spr_count = (start < image_height) ? (start + count > image_height ? image_height - start : count) : 0;
+			if ( spr_count > 0 )
+				draw_sprites( start, spr_count );
 		}
 	}
 }

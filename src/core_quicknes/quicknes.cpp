@@ -14,6 +14,16 @@
 #include <stdio.h>
 #include <string.h>
 
+extern "C" void ppu_set_region(int region);
+
+/* Region mode: 0=NTSC, 1=Dendy */
+static int current_region = QNES_REGION_NTSC;
+
+void qnes_set_region(int region) { current_region = region; }
+int qnes_get_region(void) { return current_region; }
+
+static void apply_region_settings(void);
+
 /* Emulator allocated on demand — avoids global C++ constructor running before main() */
 static Nes_Emu *emu;
 
@@ -69,6 +79,20 @@ int qnes_init(long sample_rate)
     return 0;
 }
 
+static void apply_region_settings(void)
+{
+    ppu_set_region(current_region);
+    if (current_region == QNES_REGION_DENDY) {
+        Nes_Emu::frame_rate = 50;
+        Nes_Emu::cpu_clock_rate = 1773447;
+    } else {
+        Nes_Emu::frame_rate = 60;
+        Nes_Emu::cpu_clock_rate = 1789773;
+    }
+    if (emu)
+        emu->set_frame_rate(Nes_Emu::frame_rate);
+}
+
 int qnes_load_rom(const void *data, long size)
 {
     if (!initialized)
@@ -82,6 +106,7 @@ int qnes_load_rom(const void *data, long size)
         return -1;
     }
 
+    apply_region_settings();
     rom_loaded = true;
     return 0;
 }
@@ -97,6 +122,7 @@ int qnes_load_rom_inplace(const void *data, long size)
         return -1;
     }
 
+    apply_region_settings();
     rom_loaded = true;
     return 0;
 }

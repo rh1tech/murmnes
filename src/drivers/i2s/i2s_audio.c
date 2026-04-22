@@ -69,7 +69,7 @@ void i2s_audio_init(uint data_pin, uint clock_pin_base, uint32_t sample_rate) {
 #else
     i2s_pio = pio0;
 #endif
-    dma_xfer_count = sample_rate / 60;
+    dma_xfer_count = sample_rate / 50;  /* sized for 50fps (Dendy); NTSC frames fit easily */
     if (dma_xfer_count > DMA_BUFFER_SAMPLES) dma_xfer_count = DMA_BUFFER_SAMPLES;
 
     /* Configure GPIO for PIO */

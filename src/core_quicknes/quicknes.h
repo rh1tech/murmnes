@@ -10,9 +10,19 @@
 
 #include <stdint.h>
 
+#define QNES_REGION_NTSC  0
+#define QNES_REGION_DENDY 1
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/* Set emulation region (NTSC or Dendy). Must be called BEFORE qnes_load_rom.
+ * Default is NTSC. */
+void qnes_set_region(int region);
+
+/* Get current region. */
+int qnes_get_region(void);
 
 /* Initialize emulator. Call once at startup.
  * Returns 0 on success, non-zero on error. */
