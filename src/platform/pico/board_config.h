@@ -40,6 +40,10 @@
 #define I2S_DATA_PIN       9
 #define I2S_CLOCK_PIN_BASE 10
 
+/* PWM Audio (no external DAC needed, RC low-pass filter on pins) */
+#define PWM_PIN0 10
+#define PWM_PIN1 11
+
 /* Composite TV output (optional, GPIO 12-19) */
 #define TV_BASE_PIN 12
 

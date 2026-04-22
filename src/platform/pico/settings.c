@@ -99,7 +99,7 @@ static int status_frames = 0;
 static const char *input_mode_names[] = {"ANY", "NES GAMEPAD 1", "NES GAMEPAD 2", "USB GAMEPAD 1", "USB GAMEPAD 2", "KEYBOARD", "DISABLED"};
 
 /* Audio mode names */
-static const char *audio_mode_names[] = {"HDMI", "I2S", "DISABLED"};
+static const char *audio_mode_names[] = {"HDMI", "I2S", "PWM", "DISABLED"};
 
 /* Global settings */
 settings_t g_settings = {
@@ -341,14 +341,19 @@ static void change_value(menu_item_t item, int dir) {
             }
             break;
         }
-        case MENU_AUDIO:
+        case MENU_AUDIO: {
 #if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO)
-            edit_settings.audio_mode = (edit_settings.audio_mode == AUDIO_MODE_I2S)
-                ? AUDIO_MODE_DISABLED : AUDIO_MODE_I2S;
+            /* No HDMI audio — cycle: I2S → PWM → DISABLED → I2S */
+            static const uint8_t soft_modes[] = { AUDIO_MODE_I2S, AUDIO_MODE_PWM, AUDIO_MODE_DISABLED };
+            int idx = 0;
+            for (int m = 0; m < 3; m++) if (soft_modes[m] == edit_settings.audio_mode) { idx = m; break; }
+            idx = (idx + 3 + dir) % 3;
+            edit_settings.audio_mode = soft_modes[idx];
 #else
             edit_settings.audio_mode = (uint8_t)((edit_settings.audio_mode + AUDIO_MODE_COUNT + dir) % AUDIO_MODE_COUNT);
 #endif
             break;
+        }
         case MENU_VOLUME: {
             int v = (int)edit_settings.volume + dir * VOLUME_STEP;
             if (v < VOLUME_MIN) v = VOLUME_MIN;
@@ -752,7 +757,7 @@ static int parse_input_mode(const char *value) {
 }
 
 static const char *input_mode_ini_names[] = {"any", "nes1", "nes2", "usb1", "usb2", "keyboard", "disabled"};
-static const char *audio_mode_ini_names[] = {"hdmi", "i2s", "disabled"};
+static const char *audio_mode_ini_names[] = {"hdmi", "i2s", "pwm", "disabled"};
 
 void settings_load(void) {
 
@@ -780,7 +785,9 @@ void settings_load(void) {
         else if (parse_ini_line(line, "audio", value, sizeof(value))) {
             if (strcmp(value, "i2s") == 0 || strcmp(value, "1") == 0)
                 g_settings.audio_mode = AUDIO_MODE_I2S;
-            else if (strcmp(value, "disabled") == 0 || strcmp(value, "2") == 0)
+            else if (strcmp(value, "pwm") == 0 || strcmp(value, "2") == 0)
+                g_settings.audio_mode = AUDIO_MODE_PWM;
+            else if (strcmp(value, "disabled") == 0 || strcmp(value, "3") == 0)
                 g_settings.audio_mode = AUDIO_MODE_DISABLED;
             else
                 g_settings.audio_mode = AUDIO_MODE_HDMI;

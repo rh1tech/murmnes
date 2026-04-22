@@ -164,6 +164,7 @@ target_link_libraries(frank-nes
     hardware_gpio
     hardware_pio
     hardware_pll
+    hardware_pwm
     hardware_xip_cache
     sdcard
     nespad

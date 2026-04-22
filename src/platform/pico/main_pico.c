@@ -240,13 +240,47 @@ static void hdmi_fill_silence(int count)
 }
 #endif /* !VIDEO_COMPOSITE && !HDMI_PIO */
 
-/* ─── Audio routing: HDMI or I2S based on settings ────────────────── */
+/* ─── Audio routing ───────────────────────────────────────────────── */
 static bool i2s_initialized = false;
+static bool pwm_audio_initialized = false;
 
 static void ensure_i2s_initialized(void) {
     if (!i2s_initialized) {
         i2s_audio_init(I2S_DATA_PIN, I2S_CLOCK_PIN_BASE, SAMPLE_RATE);
         i2s_initialized = true;
+    }
+}
+
+#include "hardware/pwm.h"
+
+static void ensure_pwm_audio_initialized(void) {
+    if (pwm_audio_initialized) return;
+    pwm_config cfg = pwm_get_default_config();
+    pwm_config_set_clkdiv(&cfg, 1.0f);
+    pwm_config_set_wrap(&cfg, (1 << 12) - 1);
+
+    gpio_set_function(PWM_PIN0, GPIO_FUNC_PWM);
+    pwm_init(pwm_gpio_to_slice_num(PWM_PIN0), &cfg, true);
+
+    gpio_set_function(PWM_PIN1, GPIO_FUNC_PWM);
+    pwm_init(pwm_gpio_to_slice_num(PWM_PIN1), &cfg, true);
+
+    pwm_audio_initialized = true;
+}
+
+static uint64_t pwm_next_sample_time = 0;
+static const uint32_t pwm_sample_period_us = 1000000 / SAMPLE_RATE; /* ~22µs at 44100Hz */
+
+static void pwm_audio_push_samples(const int16_t *buf, int count) {
+    if (pwm_next_sample_time == 0)
+        pwm_next_sample_time = time_us_64();
+    for (int i = 0; i < count; i++) {
+        while (time_us_64() < pwm_next_sample_time)
+            tight_loop_contents();
+        uint16_t level = (uint16_t)((int32_t)buf[i] + 0x8000) >> 4;
+        pwm_set_gpio_level(PWM_PIN0, level);
+        pwm_set_gpio_level(PWM_PIN1, level);
+        pwm_next_sample_time += pwm_sample_period_us;
     }
 }
 
@@ -271,8 +305,15 @@ static void __not_in_flash("audio") audio_push_samples(const int16_t *buf, int c
         return;
     }
     const int16_t *out = (g_settings.volume < 100) ? apply_volume(buf, count) : buf;
+    if (g_settings.audio_mode == AUDIO_MODE_PWM) {
+        ensure_pwm_audio_initialized();
+        pwm_audio_push_samples(out, count);
+#if !defined(VIDEO_COMPOSITE) && !defined(HDMI_PIO)
+        hdmi_fill_silence(count);
+#endif
+        return;
+    }
 #if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO)
-    /* Composite / PIO HDMI mode: I2S only */
     ensure_i2s_initialized();
     i2s_audio_push_samples(out, count);
 #else
@@ -288,6 +329,13 @@ static void __not_in_flash("audio") audio_push_samples(const int16_t *buf, int c
 
 void audio_fill_silence(int count)
 {
+    if (g_settings.audio_mode == AUDIO_MODE_PWM) {
+        ensure_pwm_audio_initialized();
+        pwm_set_gpio_level(PWM_PIN0, 2048);
+        pwm_set_gpio_level(PWM_PIN1, 2048);
+        sleep_us((uint64_t)count * 1000000 / SAMPLE_RATE);
+        return;
+    }
 #if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO)
     ensure_i2s_initialized();
     i2s_audio_fill_silence(count);

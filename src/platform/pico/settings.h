@@ -24,8 +24,9 @@
 // Audio output mode
 #define AUDIO_MODE_HDMI     0
 #define AUDIO_MODE_I2S      1
-#define AUDIO_MODE_DISABLED 2
-#define AUDIO_MODE_COUNT    3
+#define AUDIO_MODE_PWM      2
+#define AUDIO_MODE_DISABLED 3
+#define AUDIO_MODE_COUNT    4
 
 // Volume range (0-100, step 10)
 #define VOLUME_MIN  0
