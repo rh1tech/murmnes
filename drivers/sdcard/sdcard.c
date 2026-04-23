@@ -124,33 +124,61 @@ static void CS_LOW(void)
 static
 void init_spi(void)
 {
+#ifdef SDCARD_PIO
+	/* FatFs calls disk_initialize() on every f_mount. For PIO-SPI, pin
+	 * configuration, PIO program load, and SM init must happen exactly
+	 * once — re-running them leaks PIO instruction memory and tears down
+	 * GPIO↔PIO routing established by pio_gpio_init. Subsequent calls
+	 * only reset CS and drain FIFOs so the card can be re-enumerated. */
+	static bool pio_spi_initialized = false;
+	if (!pio_spi_initialized) {
+	    gpio_init(SDCARD_PIN_SPI0_SCK);
+	    gpio_init(SDCARD_PIN_SPI0_MISO);
+	    gpio_pull_up(SDCARD_PIN_SPI0_MISO);
+	    gpio_init(SDCARD_PIN_SPI0_MOSI);
+	    gpio_pull_up(SDCARD_PIN_SPI0_MOSI);
+	    gpio_init(SDCARD_PIN_SPI0_CS);
+	    gpio_set_dir(SDCARD_PIN_SPI0_CS, GPIO_OUT);
+	    CS_HIGH();
+
+	    gpio_set_dir(SDCARD_PIN_SPI0_SCK, GPIO_OUT);
+	    gpio_set_dir(SDCARD_PIN_SPI0_MISO, GPIO_OUT);
+	    gpio_set_dir(SDCARD_PIN_SPI0_MOSI, GPIO_OUT);
+
+	    float clkdiv = 3.0f;
+	    int cpol = 0;
+	    int cpha = 0;
+	    uint cpha0_prog_offs = pio_add_program(pio_spi.pio, &spi_cpha0_program);
+	    pio_spi_init(pio_spi.pio, pio_spi.sm,
+	                cpha0_prog_offs,
+	                8,       // 8 bits per SPI frame
+	                clkdiv,
+	                cpha,
+	                cpol,
+	                SDCARD_PIN_SPI0_SCK,
+	                SDCARD_PIN_SPI0_MOSI,
+	                SDCARD_PIN_SPI0_MISO
+	    );
+	    pio_spi_initialized = true;
+	} else {
+	    /* Quiesce: release CS, drain any stale bytes from FIFOs */
+	    CS_HIGH();
+	    pio_sm_clear_fifos(pio_spi.pio, pio_spi.sm);
+	}
+#else
 	/* GPIO pin configuration */
 	/* pull up of MISO is MUST (10Kohm external pull up is recommended) */
-	/* Set drive strength and slew rate if needed to meet wire condition */
 	gpio_init(SDCARD_PIN_SPI0_SCK);
-	//gpio_pull_up(SDCARD_PIN_SPI0_SCK);
-	//gpio_set_drive_strength(SDCARD_PIN_SPI0_SCK, PADS_BANK0_GPIO0_DRIVE_VALUE_4MA); // 2mA, 4mA (default), 8mA, 12mA
-	//gpio_set_slew_rate(SDCARD_PIN_SPI0_SCK, 0); // 0: SLOW (default), 1: FAST
-
 	gpio_init(SDCARD_PIN_SPI0_MISO);
 	gpio_pull_up(SDCARD_PIN_SPI0_MISO);
-	//gpio_set_schmitt(SDCARD_PIN_SPI0_MISO, 1); // 0: Off, 1: On (default)
-
 	gpio_init(SDCARD_PIN_SPI0_MOSI);
 	gpio_pull_up(SDCARD_PIN_SPI0_MOSI);
-	//gpio_set_drive_strength(SDCARD_PIN_SPI0_MOSI, PADS_BANK0_GPIO0_DRIVE_VALUE_4MA); // 2mA, 4mA (default), 8mA, 12mA
-	//gpio_set_slew_rate(SDCARD_PIN_SPI0_MOSI, 0); // 0: SLOW (default), 1: FAST
-
 	gpio_init(SDCARD_PIN_SPI0_CS);
-	//gpio_pull_up(SDCARD_PIN_SPI0_CS);
-	//gpio_set_drive_strength(SDCARD_PIN_SPI0_CS, PADS_BANK0_GPIO0_DRIVE_VALUE_4MA); // 2mA, 4mA (default), 8mA, 12mA
-	//gpio_set_slew_rate(SDCARD_PIN_SPI0_CS, 0); // 0: SLOW (default), 1: FAST
 	gpio_set_dir(SDCARD_PIN_SPI0_CS, GPIO_OUT);
 
 	/* chip _select invalid*/
 	CS_HIGH();
 
-#ifndef SDCARD_PIO
 	gpio_set_function(SDCARD_PIN_SPI0_SCK, GPIO_FUNC_SPI);
 	gpio_set_function(SDCARD_PIN_SPI0_MISO, GPIO_FUNC_SPI);
 	gpio_set_function(SDCARD_PIN_SPI0_MOSI, GPIO_FUNC_SPI);
@@ -163,25 +191,6 @@ void init_spi(void)
 		SPI_CPOL_0, /* cpol */
 		SPI_CPHA_0, /* cpha */
 		SPI_MSB_FIRST /* order */
-	);
-#else
-    gpio_set_dir(SDCARD_PIN_SPI0_SCK, GPIO_OUT);
-    gpio_set_dir(SDCARD_PIN_SPI0_MISO, GPIO_OUT);
-    gpio_set_dir(SDCARD_PIN_SPI0_MOSI, GPIO_OUT);
-
-	float clkdiv = 3.0f;
-	int cpol = 0;
-	int cpha = 0;
-	uint cpha0_prog_offs = pio_add_program(pio_spi.pio, &spi_cpha0_program);
-	pio_spi_init(pio_spi.pio, pio_spi.sm,
-				cpha0_prog_offs,
-				8,       // 8 bits per SPI frame
-				clkdiv,
-				cpha,
-				cpol,
-				SDCARD_PIN_SPI0_SCK,
-				SDCARD_PIN_SPI0_MOSI,
-				SDCARD_PIN_SPI0_MISO
 	);
 #endif
 }
