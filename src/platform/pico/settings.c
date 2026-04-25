@@ -26,6 +26,9 @@ extern volatile const uint8_t *pending_pixels;
 extern volatile long pending_pitch;
 extern volatile uint32_t vsync_flag;
 extern uint32_t rgb565_palette_32[2][256];
+#if defined(VGA_HSTX)
+extern void vga_hstx_update_palette_from_rgb565(const uint32_t *pal_rgb565, int count);
+#endif
 extern int pal_write_idx;
 extern volatile int pending_pal_idx;
 extern void audio_fill_silence(int count);
@@ -503,6 +506,8 @@ static void setup_menu_palette(void) {
     pal_write_idx ^= 1;
 #if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO)
     video_sync_palette_from_rgb565(pal_write_idx ^ 1);
+#elif defined(VGA_HSTX)
+    vga_hstx_update_palette_from_rgb565(rgb565_palette_32[pal_write_idx ^ 1], 256);
 #endif
 }
 
