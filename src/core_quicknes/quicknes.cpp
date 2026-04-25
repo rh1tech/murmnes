@@ -22,6 +22,9 @@ static int current_region = QNES_REGION_NTSC;
 void qnes_set_region(int region) { current_region = region; }
 int qnes_get_region(void) { return current_region; }
 
+/* Sprite limit mode: true=8/scanline (hardware accurate), false=unlimited (no flicker) */
+static bool sprite_limit_enabled = true;
+
 static void apply_region_settings(void);
 
 /* Emulator allocated on demand — avoids global C++ constructor running before main() */
@@ -54,6 +57,16 @@ void qnes_set_tile_cache_buf(void *buf, long size)
     ext_tile_cache_size = size;
 }
 
+void qnes_set_sprite_limit(int enabled)
+{
+    sprite_limit_enabled = enabled ? true : false;
+    if (emu) {
+        emu->set_sprite_mode(sprite_limit_enabled
+            ? Nes_Emu::sprites_visible
+            : Nes_Emu::sprites_enhanced);
+    }
+}
+
 void *qnes_get_tile_cache_buf(long *out_size)
 {
     if (out_size) *out_size = ext_tile_cache_size;
@@ -82,6 +95,9 @@ int qnes_init(long sample_rate)
     }
 
     emu->set_palette_range(0);
+    emu->set_sprite_mode(sprite_limit_enabled
+        ? Nes_Emu::sprites_visible
+        : Nes_Emu::sprites_enhanced);
     initialized = true;
     return 0;
 }

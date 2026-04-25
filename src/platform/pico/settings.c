@@ -75,14 +75,14 @@ extern void video_sync_palette_from_rgb565(int buf_idx);
 #define SAVE_HEADER_SIZE (SAVE_MAGIC_LEN + THUMB_SIZE)
 #define QNES_PIXEL_PITCH 272
 
-/* Menu items */
+/* Top-level menu items */
 typedef enum {
     MENU_PLAYER1,
     MENU_PLAYER2,
     MENU_SEPARATOR1,
     MENU_AUDIO,
     MENU_VOLUME,
-    MENU_MODE,
+    MENU_EMULATION,
     MENU_SEPARATOR2,
     MENU_SAVE_GAME,
     MENU_LOAD_GAME,
@@ -91,6 +91,14 @@ typedef enum {
     MENU_EXIT,
     MENU_ITEM_COUNT
 } menu_item_t;
+
+/* Emulation submenu items */
+typedef enum {
+    EMU_MENU_MODE,
+    EMU_MENU_SPRITE_LIMIT,
+    EMU_MENU_BACK,
+    EMU_MENU_ITEM_COUNT
+} emu_menu_item_t;
 
 /* Per-slot state */
 static bool slot_exists[NUM_SLOTS];
@@ -109,6 +117,9 @@ static const char *audio_mode_names[] = {"HDMI", "I2S", "PWM", "DISABLED"};
 /* Emulation mode names */
 static const char *emu_mode_names[] = {"NES", "DENDY"};
 
+/* Sprite limit names (1=ON=hardware accurate, 0=OFF=no flicker) */
+static const char *sprite_limit_names[] = {"OFF", "ON"};
+
 /* Global settings */
 settings_t g_settings = {
     .p1_mode = INPUT_MODE_ANY,
@@ -125,6 +136,7 @@ settings_t g_settings = {
     .volume = 100,
     .selector_mode = SELECTOR_MODE_CAROUSEL,
     .emu_mode = EMULATION_MODE_NES,
+    .sprite_limit = 1,
 };
 
 /* Local copy for editing */
@@ -266,12 +278,21 @@ static const char *get_menu_label(menu_item_t item) {
         case MENU_PLAYER2:   return "PLAYER 2";
         case MENU_AUDIO:     return "AUDIO";
         case MENU_VOLUME:    return "VOLUME";
-        case MENU_MODE:      return "MODE";
+        case MENU_EMULATION: return "EMULATION";
         case MENU_SAVE_GAME: return (status_frames > 0) ? status_msg : "SAVE GAME";
         case MENU_LOAD_GAME: return "LOAD GAME";
         case MENU_RESET:     return "BACK TO ROM SELECTOR";
         case MENU_EXIT:      return "BACK TO GAME";
         default:             return "";
+    }
+}
+
+static const char *get_emu_menu_label(emu_menu_item_t item) {
+    switch (item) {
+        case EMU_MENU_MODE:         return "MODE";
+        case EMU_MENU_SPRITE_LIMIT: return "SPRITE LIMIT";
+        case EMU_MENU_BACK:         return "BACK";
+        default:                    return "";
     }
 }
 
@@ -304,8 +325,15 @@ static const char *get_value_text(menu_item_t item) {
         case MENU_VOLUME:
             snprintf(volume_text_buf, sizeof(volume_text_buf), "%d%%", edit_settings.volume);
             return volume_text_buf;
-        case MENU_MODE:    return emu_mode_names[edit_settings.emu_mode];
         default:           return NULL;
+    }
+}
+
+static const char *get_emu_value_text(emu_menu_item_t item) {
+    switch (item) {
+        case EMU_MENU_MODE:         return emu_mode_names[edit_settings.emu_mode];
+        case EMU_MENU_SPRITE_LIMIT: return sprite_limit_names[edit_settings.sprite_limit ? 1 : 0];
+        default:                    return NULL;
     }
 }
 
@@ -393,10 +421,23 @@ static void change_value(menu_item_t item, int dir) {
             edit_settings.volume = (uint8_t)v;
             break;
         }
-        case MENU_MODE: {
+        default:
+            break;
+    }
+}
+
+static void change_emu_value(emu_menu_item_t item, int dir) {
+    switch (item) {
+        case EMU_MENU_MODE:
             edit_settings.emu_mode = (uint8_t)((edit_settings.emu_mode + EMULATION_MODE_COUNT + dir) % EMULATION_MODE_COUNT);
             break;
-        }
+        case EMU_MENU_SPRITE_LIMIT:
+            edit_settings.sprite_limit = edit_settings.sprite_limit ? 0 : 1;
+            /* Apply live — the PPU sprite mode takes effect on the next frame
+             * and does not require a ROM reload. */
+            qnes_set_sprite_limit(edit_settings.sprite_limit ? 1 : 0);
+            (void)dir;
+            break;
         default:
             break;
     }
@@ -447,11 +488,6 @@ static void draw_settings_menu(uint8_t *screen, int selected) {
             char buf[24];
             snprintf(buf, sizeof(buf), "< %s >", val);
             draw_text(screen, VALUE_X, y, buf, color);
-        }
-
-        /* Hint for MODE when changed */
-        if (item == MENU_MODE && edit_settings.emu_mode != g_settings.emu_mode) {
-            draw_text(screen, MENU_X, y + FONT_HEIGHT + 1, "RESTART TO APPLY", PAL_GRAY);
         }
 
         y += LINE_HEIGHT;
@@ -857,6 +893,12 @@ void settings_load(void) {
             else
                 g_settings.emu_mode = EMULATION_MODE_NES;
         }
+        else if (parse_ini_line(line, "sprite_limit", value, sizeof(value))) {
+            if (strcmp(value, "off") == 0 || strcmp(value, "0") == 0)
+                g_settings.sprite_limit = 0;
+            else
+                g_settings.sprite_limit = 1;
+        }
         else if (parse_ini_line(line, "selector", value, sizeof(value))) {
             if (strcmp(value, "browser") == 0 || strcmp(value, "1") == 0)
                 g_settings.selector_mode = SELECTOR_MODE_BROWSER;
@@ -900,6 +942,7 @@ void settings_save(void) {
         "audio = %s\n"
         "volume = %d\n"
         "mode = %s\n"
+        "sprite_limit = %s\n"
         "selector = %s\n"
         "browser_path = %s\n"
         "browser_file = %s\n",
@@ -908,6 +951,7 @@ void settings_save(void) {
         audio_mode_ini_names[g_settings.audio_mode],
         g_settings.volume,
         emu_mode_ini_names[g_settings.emu_mode < EMULATION_MODE_COUNT ? g_settings.emu_mode : 0],
+        g_settings.sprite_limit ? "on" : "off",
         selector_mode_ini_names[g_settings.selector_mode & 1],
         g_settings.browser_path,
         g_settings.browser_file);
@@ -1077,6 +1121,115 @@ static void menu_wait_vsync(void) {
     vsync_flag = 0;
 }
 
+/* ─── Emulation submenu ──────────────────────────────────────────── */
+
+static void draw_emulation_menu(uint8_t *screen, int selected) {
+    memset(screen, PAL_BG, SCREEN_WIDTH * SCREEN_HEIGHT);
+
+    const char *title = "EMULATION";
+    int title_x = (SCREEN_WIDTH - (int)strlen(title) * FONT_WIDTH) / 2;
+    draw_text(screen, title_x, MENU_TITLE_Y, title, PAL_WHITE);
+    draw_hline(screen, MENU_X, MENU_TITLE_Y + FONT_HEIGHT + 4, SCREEN_WIDTH - 2 * MENU_X, PAL_GRAY);
+
+    int y = MENU_START_Y;
+    for (int i = 0; i < EMU_MENU_ITEM_COUNT; i++) {
+        emu_menu_item_t item = (emu_menu_item_t)i;
+        uint8_t color = (i == selected) ? PAL_YELLOW : PAL_WHITE;
+
+        if (i == selected) {
+            draw_char(screen, MENU_X - 12, y, '>', color);
+        }
+        draw_text(screen, MENU_X, y, get_emu_menu_label(item), color);
+
+        const char *val = get_emu_value_text(item);
+        if (val) {
+            char buf[24];
+            snprintf(buf, sizeof(buf), "< %s >", val);
+            draw_text(screen, VALUE_X, y, buf, color);
+        }
+
+        /* Hint for MODE when changed from current active value */
+        if (item == EMU_MENU_MODE && edit_settings.emu_mode != g_settings.emu_mode) {
+            draw_text(screen, MENU_X, y + FONT_HEIGHT + 1, "RESTART TO APPLY", PAL_GRAY);
+        }
+
+        y += LINE_HEIGHT;
+    }
+
+    const char *help = "UP/DOWN:SELECT  LEFT/RIGHT:CHANGE  B:BACK";
+    int help_x = (SCREEN_WIDTH - (int)strlen(help) * FONT_WIDTH) / 2;
+    draw_text(screen, help_x, 220, help, PAL_GRAY);
+}
+
+static void emulation_menu_show(uint8_t *screen_buffer) {
+    int selected = EMU_MENU_MODE;
+    uint32_t hold_counter = 0;
+    const uint32_t REPEAT_DELAY = 10;
+    const uint32_t REPEAT_RATE = 3;
+
+    /* Wait for buttons to release before entering submenu */
+    for (int i = 0; i < 30; i++) {
+        menu_wait_vsync();
+        if (read_menu_buttons() == 0) break;
+        audio_fill_silence(SAMPLE_RATE / 60);
+        draw_emulation_menu(screen_buffer, selected);
+        pending_pitch = SCREEN_WIDTH;
+        video_post_frame(screen_buffer, SCREEN_WIDTH);
+    }
+    int prev_buttons = read_menu_buttons();
+
+    while (1) {
+        menu_wait_vsync();
+
+        int buttons = read_menu_buttons();
+        int pressed = buttons & ~prev_buttons;
+        if (buttons != 0 && buttons == prev_buttons) {
+            hold_counter++;
+            if (hold_counter > REPEAT_DELAY && (hold_counter % REPEAT_RATE) == 0) {
+                pressed = buttons;
+            }
+        } else {
+            hold_counter = 0;
+        }
+        prev_buttons = buttons;
+
+        if (pressed & BTN_UP) {
+            selected = (selected - 1 + EMU_MENU_ITEM_COUNT) % EMU_MENU_ITEM_COUNT;
+        }
+        if (pressed & BTN_DOWN) {
+            selected = (selected + 1) % EMU_MENU_ITEM_COUNT;
+        }
+        if (pressed & BTN_LEFT) {
+            change_emu_value((emu_menu_item_t)selected, -1);
+        }
+        if (pressed & BTN_RIGHT) {
+            change_emu_value((emu_menu_item_t)selected, 1);
+        }
+
+        if (pressed & (BTN_A | BTN_START)) {
+            if (selected == EMU_MENU_BACK) break;
+            change_emu_value((emu_menu_item_t)selected, 1);
+        }
+
+        if (pressed & BTN_B) break;
+
+        draw_emulation_menu(screen_buffer, selected);
+        audio_fill_silence(SAMPLE_RATE / 60);
+        pending_pitch = SCREEN_WIDTH;
+        video_post_frame(screen_buffer, SCREEN_WIDTH);
+    }
+
+    /* Wait for buttons to release before returning */
+    for (int i = 0; i < 30; i++) {
+        menu_wait_vsync();
+        if (read_menu_buttons() == 0) break;
+        audio_fill_silence(SAMPLE_RATE / 60);
+        draw_emulation_menu(screen_buffer, selected);
+        pending_pitch = SCREEN_WIDTH;
+        video_post_frame(screen_buffer, SCREEN_WIDTH);
+    }
+}
+
 settings_result_t settings_menu_show(uint8_t *screen_buffer) {
     /* Copy current settings for editing */
     edit_settings = g_settings;
@@ -1140,8 +1293,20 @@ settings_result_t settings_menu_show(uint8_t *screen_buffer) {
             change_value((menu_item_t)selected, 1);
         }
 
+        /* Enter Emulation submenu on RIGHT — convenient for value-style rows */
+        if ((pressed & BTN_RIGHT) && selected == MENU_EMULATION) {
+            emulation_menu_show(screen_buffer);
+            prev_buttons = read_menu_buttons();
+            continue;
+        }
+
         /* Confirm */
         if (pressed & (BTN_A | BTN_START)) {
+            if (selected == MENU_EMULATION) {
+                emulation_menu_show(screen_buffer);
+                prev_buttons = read_menu_buttons();
+                continue;
+            }
             if (selected == MENU_EXIT) {
                 g_settings = edit_settings;
                 settings_save();

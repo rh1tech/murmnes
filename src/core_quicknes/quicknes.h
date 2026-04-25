@@ -24,6 +24,11 @@ void qnes_set_region(int region);
 /* Get current region. */
 int qnes_get_region(void);
 
+/* Enable or disable the NES 8-sprites-per-scanline limit.
+ * enabled=1 (default): hardware-accurate limit — sprites beyond 8 per scanline
+ * flicker as on real hardware. enabled=0: render all sprites (no flicker). */
+void qnes_set_sprite_limit(int enabled);
+
 /* Initialize emulator. Call once at startup.
  * Returns 0 on success, non-zero on error. */
 int qnes_init(long sample_rate);

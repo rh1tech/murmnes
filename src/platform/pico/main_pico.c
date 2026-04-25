@@ -1012,6 +1012,9 @@ static void real_main(void)
     qnes_set_region(g_settings.emu_mode == EMULATION_MODE_DENDY
                     ? QNES_REGION_DENDY : QNES_REGION_NTSC);
 
+    /* Apply per-scanline sprite limit (ON = 8/scanline hardware behavior, OFF = render all) */
+    qnes_set_sprite_limit(g_settings.sprite_limit ? 1 : 0);
+
     /* The selector is also used as a file browser when there are no ROMs
      * in /nes — it will skip the carousel and show the browser directly. */
     bool selector_available = psram_available &&
