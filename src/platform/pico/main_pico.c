@@ -991,6 +991,18 @@ static void real_main(void)
         }
     }
 
+    /* If the SD is present but the ROM library is empty (missing /nes or
+     * no .nes files), surface the reason to the user before opening the
+     * file browser. The carousel is disabled because there is nothing to
+     * show in it. Only shown once per boot. */
+    if (psram_available && num_roms == 0) {
+        rom_scan_result_t sr = rom_selector_scan_result();
+        if (sr == ROM_SCAN_NO_NES_DIR || sr == ROM_SCAN_NO_ROMS) {
+            rom_selector_no_roms_notice();
+            g_settings.selector_mode = SELECTOR_MODE_BROWSER;
+        }
+    }
+
     while (1) {  /* outer loop: ROM selector → emulation → reset → ROM selector */
 
     /* Show ROM selector */
@@ -1000,7 +1012,13 @@ static void real_main(void)
     qnes_set_region(g_settings.emu_mode == EMULATION_MODE_DENDY
                     ? QNES_REGION_DENDY : QNES_REGION_NTSC);
 
-    if (num_roms > 0) {
+    /* The selector is also used as a file browser when there are no ROMs
+     * in /nes — it will skip the carousel and show the browser directly. */
+    bool selector_available = psram_available &&
+        (num_roms > 0 || rom_selector_scan_result() == ROM_SCAN_NO_ROMS
+                      || rom_selector_scan_result() == ROM_SCAN_NO_NES_DIR);
+
+    if (selector_available) {
         long rom_size = 0;
         if (rom_selector_show(&rom_size)) {
             sd_rom_buf = (uint8_t *)rom_selector_get_rom_data();
@@ -1013,10 +1031,10 @@ static void real_main(void)
     }
 
     /* Fallback: try loading first .nes from SD — only when selector was
-     * not available (no PSRAM or no ROMs found).  If the selector was shown
-     * but the chosen ROM failed to load, loop back instead of silently
-     * loading a different game (which also risks OOM). */
-    if (!rom_loaded && num_roms == 0) {
+     * not available (no PSRAM).  If the selector was shown but the chosen
+     * ROM failed to load, loop back instead of silently loading a different
+     * game (which also risks OOM). */
+    if (!rom_loaded && !selector_available) {
         long sd_rom_size = 0;
         uint8_t *sd_rom = try_load_rom_from_sd(&sd_rom_size);
         if (sd_rom) {
@@ -1195,7 +1213,7 @@ static void real_main(void)
 
         }
         if (reset_requested) continue;
-    } else if (num_roms > 0) {
+    } else if (selector_available) {
         /* Selector was available but load failed — loop back to selector */
         printf("ROM load failed, returning to selector\n");
         continue;

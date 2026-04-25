@@ -16,6 +16,14 @@ extern "C" {
 /* Maximum ROM filename length (including path) */
 #define ROM_PATH_MAX 280
 
+/* Result of the SD scan performed during preload. */
+typedef enum {
+    ROM_SCAN_OK = 0,        /* at least one .nes found in /nes */
+    ROM_SCAN_NO_SD,         /* SD mount failed */
+    ROM_SCAN_NO_NES_DIR,    /* SD mounted but /nes directory missing */
+    ROM_SCAN_NO_ROMS,       /* /nes exists but has no .nes files */
+} rom_scan_result_t;
+
 /**
  * Phase 1: Mount SD, scan /nes for .nes files, load CRC cache.
  * Fast — no per-file I/O. Call BEFORE HDMI starts.
@@ -65,6 +73,17 @@ void sd_error_show(void);
  * Returns true if the SD card was successfully mounted during preload.
  */
 bool rom_selector_sd_ok(void);
+
+/**
+ * Get the result of the last SD scan (why the ROM library is empty, if it is).
+ */
+rom_scan_result_t rom_selector_scan_result(void);
+
+/**
+ * Display a "no ROMs" notice with instructions, then wait for user input.
+ * Uses the scan result to tailor the message.
+ */
+void rom_selector_no_roms_notice(void);
 
 #ifdef __cplusplus
 }

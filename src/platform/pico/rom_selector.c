@@ -307,6 +307,7 @@ typedef struct {
 static rom_entry_t *rom_list;  /* -> PSRAM */
 static int rom_count = 0;
 static bool sd_mount_succeeded = false;
+static rom_scan_result_t scan_result = ROM_SCAN_NO_SD;
 
 static int strcasecmp_rom(const void *a, const void *b) {
     const rom_entry_t *ra = (const rom_entry_t *)a;
@@ -320,10 +321,12 @@ static int strcasecmp_rom(const void *a, const void *b) {
     }
 }
 
-static int scan_roms(void) {
+static int scan_roms(bool *out_dir_ok) {
     rom_count = 0;
+    if (out_dir_ok) *out_dir_ok = false;
     DIR dir;
     if (f_opendir(&dir, "/nes") != FR_OK) return 0;
+    if (out_dir_ok) *out_dir_ok = true;
     FILINFO fno;
     while (f_readdir(&dir, &fno) == FR_OK && fno.fname[0] != '\0' && rom_count < MAX_ROMS) {
         if (fno.fattrib & AM_DIR) continue;
@@ -1073,18 +1076,29 @@ int rom_selector_preload_scan(long *out_rom_size) {
 
     if (f_mount(&preload_fs, "", 1) != FR_OK) {
         sd_mount_succeeded = false;
+        scan_result = ROM_SCAN_NO_SD;
         return 0;
     }
     sd_mount_succeeded = true;
 
-    int count = scan_roms();
-    printf("ROM selector: found %d ROMs\n", count);
-    if (count == 0) { f_unmount(""); return 0; }
+    bool nes_dir_ok = false;
+    int count = scan_roms(&nes_dir_ok);
+    printf("ROM selector: found %d ROMs (nes_dir_ok=%d)\n", count, nes_dir_ok);
+    if (count == 0) {
+        scan_result = nes_dir_ok ? ROM_SCAN_NO_ROMS : ROM_SCAN_NO_NES_DIR;
+        f_unmount("");
+        return 0;
+    }
+    scan_result = ROM_SCAN_OK;
 
     load_crc_cache();
 
     xip_cache_clean_all();
     return count;
+}
+
+rom_scan_result_t rom_selector_scan_result(void) {
+    return scan_result;
 }
 
 void rom_selector_preload_index(void) {
@@ -1319,6 +1333,17 @@ static bool file_browser_show(long *out_rom_size) {
     }
     if (!persist_usable) {
         strcpy(cur_path, "/nes");
+    }
+    /* If the chosen start directory is missing (e.g. no /nes on SD),
+     * fall back to the SD root so the browser always has somewhere
+     * to stand. */
+    {
+        DIR probe;
+        if (f_opendir(&probe, cur_path) != FR_OK) {
+            strcpy(cur_path, "/");
+        } else {
+            f_closedir(&probe);
+        }
     }
     fb_scan_dir(cur_path);
 
@@ -1855,6 +1880,19 @@ bool rom_selector_show(long *out_rom_size) {
     static FATFS show_fs;
     bool sd_ok = (f_mount(&show_fs, "", 1) == FR_OK);
 
+    /* No ROMs in the library: carousel is disabled — the only way forward
+     * is the file browser. Keep reopening it until the user loads a ROM
+     * (or reboots). */
+    if (rom_count == 0) {
+        while (sd_ok) {
+            f_unmount("");
+            if (file_browser_show(out_rom_size))
+                return true;
+            sd_ok = (f_mount(&show_fs, "", 1) == FR_OK);
+        }
+        return false;
+    }
+
     int selected = last_selected_rom;
     int prev_buttons = read_selector_buttons();  /* ignore held buttons from previous screen */
     uint32_t hold_counter = 0;
@@ -2310,6 +2348,80 @@ void welcome_screen_show(void) {
     }
 
     /* Wait for buttons to be released before proceeding */
+    for (int i = 0; i < 60; i++) {
+        selector_wait_vsync();
+        if (read_selector_buttons() == 0) break;
+        audio_fill_silence(SAMPLE_RATE / 60);
+        pending_pitch = SCREEN_W;
+        video_post_frame(fb_show, SCREEN_W);
+    }
+}
+
+/* ─── No-ROMs notice screen ───────────────────────────────────────── */
+
+/*
+ * Shown when /nes is missing or empty. Tells the user how to seed their
+ * SD card and waits for a button press before handing off to the file
+ * browser fallback (which starts at root when /nes is missing).
+ */
+void rom_selector_no_roms_notice(void) {
+    fb = test_pixels;
+    fb_show = sel_backbuf;
+    setup_selector_palette();
+
+    const char *line1;
+    const char *line2;
+    switch (scan_result) {
+    case ROM_SCAN_NO_NES_DIR:
+        line1 = "NO /NES DIRECTORY ON SD CARD";
+        line2 = "CREATE A /NES FOLDER";
+        break;
+    case ROM_SCAN_NO_ROMS:
+    default:
+        line1 = "NO .NES ROMS FOUND IN /NES";
+        line2 = "COPY .NES FILES TO /NES";
+        break;
+    }
+
+    int prev_buttons = read_selector_buttons();
+    uint32_t frame = 0;
+
+    while (1) {
+        selector_wait_vsync();
+
+        fb_fill(PAL_BG);
+
+        fb_text_center(40, "ROM LIBRARY EMPTY", PAL_WHITE);
+        fb_hline(SAFE_X, 52, SAFE_W, PAL_GRAY);
+
+        fb_text_center(70, line1, PAL_GRAY);
+        fb_text_center(84, line2, PAL_GRAY);
+
+        fb_text_center(108, "OPTIONAL: COPY METADATA/", PAL_GRAY);
+        fb_text_center(120, "FOR COVER ART AND TITLES", PAL_GRAY);
+
+        fb_text_center(150, "OPENING FILE BROWSER...", PAL_CART_LIGHT);
+
+        if (((frame / 30) & 1) == 0)
+            fb_text_center(SCREEN_H - 40, "PRESS ANY BUTTON TO CONTINUE", PAL_WHITE);
+
+        uint8_t *tmp = fb;
+        fb = fb_show;
+        fb_show = tmp;
+        audio_fill_silence(SAMPLE_RATE / 60);
+        pending_pitch = SCREEN_W;
+        video_post_frame(fb_show, SCREEN_W);
+
+        int buttons = read_selector_buttons();
+        int pressed = buttons & ~prev_buttons;
+        prev_buttons = buttons;
+        if (pressed) break;
+
+        frame++;
+        if (frame >= 600) break;  /* auto-continue after ~10s */
+    }
+
+    /* Wait for buttons to be released so they don't leak into the browser. */
     for (int i = 0; i < 60; i++) {
         selector_wait_vsync();
         if (read_selector_buttons() == 0) break;
