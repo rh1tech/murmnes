@@ -42,6 +42,15 @@
 #define EMULATION_MODE_DENDY 1
 #define EMULATION_MODE_COUNT 2
 
+// Audio equalizer presets (must match QNES_EQ_* in quicknes.h)
+#define AUDIO_EQ_NES     0
+#define AUDIO_EQ_FAMICOM 1
+#define AUDIO_EQ_TV      2
+#define AUDIO_EQ_FLAT    3
+#define AUDIO_EQ_CRISP   4
+#define AUDIO_EQ_TINNY   5
+#define AUDIO_EQ_COUNT   6
+
 typedef struct {
     uint8_t p1_mode;        // Player 1 input mode (INPUT_MODE_*)
     uint8_t p2_mode;        // Player 2 input mode (INPUT_MODE_*)
@@ -50,6 +59,7 @@ typedef struct {
     uint8_t selector_mode;  // ROM selector view (SELECTOR_MODE_*)
     uint8_t emu_mode;       // Emulation mode (EMULATION_MODE_*)
     uint8_t sprite_limit;   // 1 = 8 sprites/scanline (default), 0 = unlimited (no flicker)
+    uint8_t audio_eq;       // Audio equalizer preset (AUDIO_EQ_*)
     char browser_path[280]; // Last file browser directory
     char browser_file[256]; // Last launched file name (in browser_path)
 } settings_t;

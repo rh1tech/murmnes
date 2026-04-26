@@ -25,6 +25,22 @@ int qnes_get_region(void) { return current_region; }
 /* Sprite limit mode: true=8/scanline (hardware accurate), false=unlimited (no flicker) */
 static bool sprite_limit_enabled = true;
 
+/* Current equalizer preset — remembered so the setting survives re-init. */
+static int current_eq_preset = QNES_EQ_NES;
+
+static Nes_Emu::equalizer_t const *eq_preset_ptr(int preset)
+{
+    switch (preset) {
+        case QNES_EQ_FAMICOM: return &Nes_Emu::famicom_eq;
+        case QNES_EQ_TV:      return &Nes_Emu::tv_eq;
+        case QNES_EQ_FLAT:    return &Nes_Emu::flat_eq;
+        case QNES_EQ_CRISP:   return &Nes_Emu::crisp_eq;
+        case QNES_EQ_TINNY:   return &Nes_Emu::tinny_eq;
+        case QNES_EQ_NES:
+        default:              return &Nes_Emu::nes_eq;
+    }
+}
+
 static void apply_region_settings(void);
 
 /* Emulator allocated on demand — avoids global C++ constructor running before main() */
@@ -67,6 +83,15 @@ void qnes_set_sprite_limit(int enabled)
     }
 }
 
+void qnes_set_audio_eq(int preset)
+{
+    if (preset < 0 || preset >= QNES_EQ_COUNT) preset = QNES_EQ_NES;
+    current_eq_preset = preset;
+    if (emu) {
+        emu->set_equalizer(*eq_preset_ptr(preset));
+    }
+}
+
 void *qnes_get_tile_cache_buf(long *out_size)
 {
     if (out_size) *out_size = ext_tile_cache_size;
@@ -98,6 +123,7 @@ int qnes_init(long sample_rate)
     emu->set_sprite_mode(sprite_limit_enabled
         ? Nes_Emu::sprites_visible
         : Nes_Emu::sprites_enhanced);
+    emu->set_equalizer(*eq_preset_ptr(current_eq_preset));
     initialized = true;
     return 0;
 }

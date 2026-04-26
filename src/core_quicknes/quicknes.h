@@ -29,6 +29,17 @@ int qnes_get_region(void);
  * flicker as on real hardware. enabled=0: render all sprites (no flicker). */
 void qnes_set_sprite_limit(int enabled);
 
+/* Audio equalizer presets — tonal color of the APU mix. Does not affect
+ * emulation accuracy. Valid values: 0..QNES_EQ_COUNT-1. Default QNES_EQ_NES. */
+#define QNES_EQ_NES     0  /* NES (default) */
+#define QNES_EQ_FAMICOM 1  /* Famicom */
+#define QNES_EQ_TV      2  /* muffled TV speaker */
+#define QNES_EQ_FLAT    3  /* flat — no coloring */
+#define QNES_EQ_CRISP   4  /* treble boost */
+#define QNES_EQ_TINNY   5  /* handheld-speaker sound */
+#define QNES_EQ_COUNT   6
+void qnes_set_audio_eq(int preset);
+
 /* Initialize emulator. Call once at startup.
  * Returns 0 on success, non-zero on error. */
 int qnes_init(long sample_rate);

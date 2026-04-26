@@ -43,6 +43,7 @@
 #include "settings.h"
 #include "rom_selector.h"
 #include "i2s_audio.h"
+#include "pwm_audio.h"
 #include "uart_logging.h"
 #include "ff.h"
 #include "hardware/spi.h"
@@ -261,33 +262,8 @@ static void ensure_i2s_initialized(void) {
 
 static void ensure_pwm_audio_initialized(void) {
     if (pwm_audio_initialized) return;
-    pwm_config cfg = pwm_get_default_config();
-    pwm_config_set_clkdiv(&cfg, 1.0f);
-    pwm_config_set_wrap(&cfg, (1 << 12) - 1);
-
-    gpio_set_function(PWM_PIN0, GPIO_FUNC_PWM);
-    pwm_init(pwm_gpio_to_slice_num(PWM_PIN0), &cfg, true);
-
-    gpio_set_function(PWM_PIN1, GPIO_FUNC_PWM);
-    pwm_init(pwm_gpio_to_slice_num(PWM_PIN1), &cfg, true);
-
+    pwm_audio_init(PWM_PIN0, PWM_PIN1, SAMPLE_RATE);
     pwm_audio_initialized = true;
-}
-
-static uint64_t pwm_next_sample_time = 0;
-static const uint32_t pwm_sample_period_us = 1000000 / SAMPLE_RATE; /* ~22µs at 44100Hz */
-
-static void pwm_audio_push_samples(const int16_t *buf, int count) {
-    if (pwm_next_sample_time == 0)
-        pwm_next_sample_time = time_us_64();
-    for (int i = 0; i < count; i++) {
-        while (time_us_64() < pwm_next_sample_time)
-            tight_loop_contents();
-        uint16_t level = (uint16_t)((int32_t)buf[i] + 0x8000) >> 4;
-        pwm_set_gpio_level(PWM_PIN0, level);
-        pwm_set_gpio_level(PWM_PIN1, level);
-        pwm_next_sample_time += pwm_sample_period_us;
-    }
 }
 
 /* Apply volume: scale 16-bit samples by g_settings.volume (0-100) */
@@ -337,9 +313,7 @@ void audio_fill_silence(int count)
 {
     if (g_settings.audio_mode == AUDIO_MODE_PWM) {
         ensure_pwm_audio_initialized();
-        pwm_set_gpio_level(PWM_PIN0, 2048);
-        pwm_set_gpio_level(PWM_PIN1, 2048);
-        sleep_us((uint64_t)count * 1000000 / SAMPLE_RATE);
+        pwm_audio_fill_silence(count);
         return;
     }
 #if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO) || defined(VGA_HSTX)
@@ -1014,6 +988,9 @@ static void real_main(void)
 
     /* Apply per-scanline sprite limit (ON = 8/scanline hardware behavior, OFF = render all) */
     qnes_set_sprite_limit(g_settings.sprite_limit ? 1 : 0);
+
+    /* Apply audio equalizer preset */
+    qnes_set_audio_eq(g_settings.audio_eq);
 
     /* The selector is also used as a file browser when there are no ROMs
      * in /nes — it will skip the carousel and show the browser directly. */

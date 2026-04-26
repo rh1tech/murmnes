@@ -96,6 +96,7 @@ typedef enum {
 typedef enum {
     EMU_MENU_MODE,
     EMU_MENU_SPRITE_LIMIT,
+    EMU_MENU_AUDIO_EQ,
     EMU_MENU_BACK,
     EMU_MENU_ITEM_COUNT
 } emu_menu_item_t;
@@ -120,6 +121,10 @@ static const char *emu_mode_names[] = {"NES", "DENDY"};
 /* Sprite limit names (1=ON=hardware accurate, 0=OFF=no flicker) */
 static const char *sprite_limit_names[] = {"OFF", "ON"};
 
+/* Audio equalizer preset names (must match AUDIO_EQ_*) */
+static const char *audio_eq_names[] = {"NES", "FAMICOM", "TV", "FLAT", "CRISP", "TINNY"};
+static const char *audio_eq_ini_names[] = {"nes", "famicom", "tv", "flat", "crisp", "tinny"};
+
 /* Global settings */
 settings_t g_settings = {
     .p1_mode = INPUT_MODE_ANY,
@@ -137,6 +142,7 @@ settings_t g_settings = {
     .selector_mode = SELECTOR_MODE_CAROUSEL,
     .emu_mode = EMULATION_MODE_NES,
     .sprite_limit = 1,
+    .audio_eq = AUDIO_EQ_NES,
 };
 
 /* Local copy for editing */
@@ -291,6 +297,7 @@ static const char *get_emu_menu_label(emu_menu_item_t item) {
     switch (item) {
         case EMU_MENU_MODE:         return "MODE";
         case EMU_MENU_SPRITE_LIMIT: return "SPRITE LIMIT";
+        case EMU_MENU_AUDIO_EQ:     return "AUDIO EQ";
         case EMU_MENU_BACK:         return "BACK";
         default:                    return "";
     }
@@ -333,6 +340,8 @@ static const char *get_emu_value_text(emu_menu_item_t item) {
     switch (item) {
         case EMU_MENU_MODE:         return emu_mode_names[edit_settings.emu_mode];
         case EMU_MENU_SPRITE_LIMIT: return sprite_limit_names[edit_settings.sprite_limit ? 1 : 0];
+        case EMU_MENU_AUDIO_EQ:
+            return audio_eq_names[edit_settings.audio_eq < AUDIO_EQ_COUNT ? edit_settings.audio_eq : 0];
         default:                    return NULL;
     }
 }
@@ -437,6 +446,11 @@ static void change_emu_value(emu_menu_item_t item, int dir) {
              * and does not require a ROM reload. */
             qnes_set_sprite_limit(edit_settings.sprite_limit ? 1 : 0);
             (void)dir;
+            break;
+        case EMU_MENU_AUDIO_EQ:
+            edit_settings.audio_eq = (uint8_t)((edit_settings.audio_eq + AUDIO_EQ_COUNT + dir) % AUDIO_EQ_COUNT);
+            /* Apply live — tonal change, no ROM reload needed. */
+            qnes_set_audio_eq(edit_settings.audio_eq);
             break;
         default:
             break;
@@ -899,6 +913,14 @@ void settings_load(void) {
             else
                 g_settings.sprite_limit = 1;
         }
+        else if (parse_ini_line(line, "audio_eq", value, sizeof(value))) {
+            for (int i = 0; i < AUDIO_EQ_COUNT; i++) {
+                if (strcmp(value, audio_eq_ini_names[i]) == 0) {
+                    g_settings.audio_eq = (uint8_t)i;
+                    break;
+                }
+            }
+        }
         else if (parse_ini_line(line, "selector", value, sizeof(value))) {
             if (strcmp(value, "browser") == 0 || strcmp(value, "1") == 0)
                 g_settings.selector_mode = SELECTOR_MODE_BROWSER;
@@ -941,6 +963,7 @@ void settings_save(void) {
         "player2 = %s\n"
         "audio = %s\n"
         "volume = %d\n"
+        "audio_eq = %s\n"
         "mode = %s\n"
         "sprite_limit = %s\n"
         "selector = %s\n"
@@ -950,6 +973,7 @@ void settings_save(void) {
         input_mode_ini_names[g_settings.p2_mode],
         audio_mode_ini_names[g_settings.audio_mode],
         g_settings.volume,
+        audio_eq_ini_names[g_settings.audio_eq < AUDIO_EQ_COUNT ? g_settings.audio_eq : 0],
         emu_mode_ini_names[g_settings.emu_mode < EMULATION_MODE_COUNT ? g_settings.emu_mode : 0],
         g_settings.sprite_limit ? "on" : "off",
         selector_mode_ini_names[g_settings.selector_mode & 1],

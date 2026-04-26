@@ -243,6 +243,7 @@ add_executable(frank-nes
     ${DRIVERSDIR}/psram/psram_init.c
     ${DRIVERSDIR}/psram/psram_allocator.c
     ${DRIVERSDIR}/i2s/i2s_audio.c
+    ${DRIVERSDIR}/pwm_audio/pwm_audio.c
     ${QNES_SOURCES}
     ${EMU2413_SOURCES}
 )
@@ -257,6 +258,7 @@ target_include_directories(frank-nes PRIVATE
     ${DRIVERSDIR}
     ${DRIVERSDIR}/psram
     ${DRIVERSDIR}/i2s
+    ${DRIVERSDIR}/pwm_audio
     ${SRCDIR}/lib/fatfs
     ${CMAKE_CURRENT_BINARY_DIR}
 )
