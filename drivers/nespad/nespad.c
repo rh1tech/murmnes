@@ -16,8 +16,12 @@
  * IRQ-triggered NES/SNES gamepad reader via PIO.
  * Based on pico-infonesPlus M1/M2 variant (shared latch/clock).
  *
+ * For dual-port boards (two NES controllers), two state machines run the
+ * same program on the same PIO. They share CLK + LATCH (both SMs drive the
+ * pins identically and in lockstep) and each SM reads its own DATA pin.
+ *
  * The PIO SM idles at "irq wait 0" between reads — zero bus activity
- * until nespad_read() clears the IRQ to trigger a read cycle (~100µs).
+ * until nespad_read_start() clears the IRQ to trigger a read cycle (~100µs).
  * This avoids continuous PIO traffic that can disrupt HSTX HDMI output.
  */
 
@@ -55,25 +59,18 @@ static const struct pio_program nespad_program = {
 };
 
 static PIO pio = pio1;
-static int8_t sm = -1;
+static int8_t sm1 = -1;
+static int8_t sm2 = -1;
 static bool pad_initialized = false;
 
 uint32_t nespad_state = 0;
 uint32_t nespad_state2 = 0;
 
-bool nespad_begin(uint32_t cpu_khz, uint8_t clkPin, uint8_t dataPin,
-                  uint8_t latPin)
+/* Configure one SM to run nespad_program with the given data pin.
+ * Both SMs share clkPin (sideset) and latPin (set). */
+static bool configure_sm(uint sm, uint offset, uint clkPin, uint dataPin,
+                         uint latPin, uint32_t cpu_khz)
 {
-    sm = pio_claim_unused_sm(pio, false);
-    if (sm < 0)
-        return false;
-    if (!pio_can_add_program(pio, &nespad_program)) {
-        pio_sm_unclaim(pio, sm);
-        sm = -1;
-        return false;
-    }
-
-    uint offset = pio_add_program(pio, &nespad_program);
     pio_sm_config c = pio_get_default_sm_config();
     sm_config_set_wrap(&c, offset + NESPAD_WRAP_TARGET, offset + NESPAD_WRAP);
     sm_config_set_sideset(&c, 1, false, false);
@@ -82,12 +79,11 @@ bool nespad_begin(uint32_t cpu_khz, uint8_t clkPin, uint8_t dataPin,
     sm_config_set_in_pins(&c, dataPin);
     sm_config_set_set_pins(&c, latPin, 1);
 
-    pio_gpio_init(pio, clkPin);
     pio_gpio_init(pio, dataPin);
-    pio_gpio_init(pio, latPin);
-
     gpio_set_pulls(dataPin, true, false);
 
+    /* CLK and LATCH are driven by both SMs identically; pindirs for those
+     * are set per-SM so each SM owns output enable on the shared pins. */
     pio_sm_set_pindirs_with_mask(pio, sm,
                                   (1u << clkPin) | (1u << latPin),
                                   (1u << clkPin) | (1u << dataPin) |
@@ -97,47 +93,76 @@ bool nespad_begin(uint32_t cpu_khz, uint8_t clkPin, uint8_t dataPin,
     sm_config_set_in_shift(&c, true, true, 8);
     sm_config_set_clkdiv_int_frac(&c, cpu_khz / 1000, 0); /* 1 MHz */
 
-    pio_set_irq0_source_enabled(pio, (enum pio_interrupt_source)(pis_interrupt0 + sm), false);
     pio_sm_clear_fifos(pio, sm);
     pio_sm_init(pio, sm, offset, &c);
-    pio_sm_set_enabled(pio, sm, true);
+    return true;
+}
+
+bool nespad_begin(uint32_t cpu_khz, uint8_t clkPin, uint8_t dataPin,
+                  uint8_t data2Pin, uint8_t latPin)
+{
+    const bool have_pad2 = (data2Pin != NESPAD_DATA_PIN_NONE);
+
+    sm1 = pio_claim_unused_sm(pio, false);
+    if (sm1 < 0)
+        return false;
+    if (have_pad2) {
+        sm2 = pio_claim_unused_sm(pio, false);
+        if (sm2 < 0) {
+            pio_sm_unclaim(pio, sm1);
+            sm1 = -1;
+            return false;
+        }
+    }
+    if (!pio_can_add_program(pio, &nespad_program)) {
+        pio_sm_unclaim(pio, sm1);
+        sm1 = -1;
+        if (sm2 >= 0) {
+            pio_sm_unclaim(pio, sm2);
+            sm2 = -1;
+        }
+        return false;
+    }
+
+    uint offset = pio_add_program(pio, &nespad_program);
+
+    /* Shared CLK + LATCH are initialized once. */
+    pio_gpio_init(pio, clkPin);
+    pio_gpio_init(pio, latPin);
+
+    configure_sm((uint)sm1, offset, clkPin, dataPin, latPin, cpu_khz);
+    if (have_pad2)
+        configure_sm((uint)sm2, offset, clkPin, data2Pin, latPin, cpu_khz);
+
+    /* Disable SM IRQ bubbling to CPU — we only use "irq wait 0" as a gate. */
+    pio_set_irq0_source_enabled(pio, (enum pio_interrupt_source)(pis_interrupt0 + sm1), false);
+    if (have_pad2)
+        pio_set_irq0_source_enabled(pio, (enum pio_interrupt_source)(pis_interrupt0 + sm2), false);
+
+    /* Start both SMs in lockstep so they agree on CLK/LATCH edges. */
+    uint32_t sm_mask = 1u << sm1;
+    if (have_pad2) sm_mask |= 1u << sm2;
+    pio_enable_sm_mask_in_sync(pio, sm_mask);
 
     pad_initialized = true;
     return true;
 }
 
-/* Trigger PIO read (non-blocking). Result ready in ~100µs via nespad_read_finish(). */
+/* Trigger PIO read (non-blocking). Result ready in ~100µs via nespad_read_finish().
+ * Clearing IRQ 0 releases both SMs simultaneously. */
 void nespad_read_start(void)
 {
-    if (!pad_initialized || sm < 0)
+    if (!pad_initialized || sm1 < 0)
         return;
     pio_interrupt_clear(pio, 0);
 }
 
-/* Wait for PIO read to complete and update nespad_state.
- * Call ~100µs+ after nespad_read_start(). If called later, returns instantly.
- * Uses timeout to avoid deadlock if PIO fails. */
-void nespad_read_finish(void)
+/* Decode raw 8-bit button byte (shifted into upper byte by autopush)
+ * into a DPAD_* bitmask. 0xFF (all pressed) → treat as disconnected. */
+static uint32_t decode_buttons(uint32_t raw)
 {
-    if (!pad_initialized || sm < 0)
-        return;
-
-    /* Wait up to ~500µs for PIO to push result (read takes ~100µs) */
-    for (int i = 0; i < 5000 && pio_sm_is_rx_fifo_empty(pio, sm); i++)
-        tight_loop_contents();
-    if (pio_sm_is_rx_fifo_empty(pio, sm))
-        return; /* timeout — keep previous state */
-
-    uint32_t raw = pio->rxf[sm];
-
-    /* 8-bit result in upper byte (right-shift autopush at 8 bits).
-     * Bit order: 0x01=A, 0x02=B, 0x04=Sel, 0x08=Start,
-     * 0x10=Up, 0x20=Down, 0x40=Left, 0x80=Right. */
     uint8_t buttons = (raw >> 24) ^ 0xFF;
-
-    /* All 8 buttons pressed at once is physically impossible —
-     * treat it as no controller connected (floating data line). */
-    if (buttons == 0xFF) buttons = 0x00;
+    if (buttons == 0xFF) return 0;
 
     uint32_t state = 0;
     if (buttons & 0x01) state |= DPAD_A;
@@ -148,9 +173,39 @@ void nespad_read_finish(void)
     if (buttons & 0x20) state |= DPAD_DOWN;
     if (buttons & 0x40) state |= DPAD_LEFT;
     if (buttons & 0x80) state |= DPAD_RIGHT;
+    return state;
+}
 
-    nespad_state = state;
-    nespad_state2 = 0;
+/* Drain one SM's RX FIFO with a short timeout. Returns true if a value was
+ * consumed into *out; false on timeout (caller keeps previous state). */
+static bool drain_sm(uint sm, uint32_t *out)
+{
+    for (int i = 0; i < 5000 && pio_sm_is_rx_fifo_empty(pio, sm); i++)
+        tight_loop_contents();
+    if (pio_sm_is_rx_fifo_empty(pio, sm))
+        return false;
+    *out = pio->rxf[sm];
+    return true;
+}
+
+/* Wait for PIO read to complete and update nespad_state[2].
+ * Call ~100µs+ after nespad_read_start(). If called later, returns instantly. */
+void nespad_read_finish(void)
+{
+    if (!pad_initialized || sm1 < 0)
+        return;
+
+    uint32_t raw = 0;
+    if (drain_sm((uint)sm1, &raw))
+        nespad_state = decode_buttons(raw);
+
+    if (sm2 >= 0) {
+        raw = 0;
+        if (drain_sm((uint)sm2, &raw))
+            nespad_state2 = decode_buttons(raw);
+    } else {
+        nespad_state2 = 0;
+    }
 }
 
 /* Convenience: trigger + block. Use start/finish for overlapped reads. */

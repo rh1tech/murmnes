@@ -23,9 +23,10 @@
 #define SDCARD_PIN_SPI0_CS   43
 
 /* NES Gamepad */
-#define NESPAD_CLK_PIN   4
-#define NESPAD_LATCH_PIN 5
-#define NESPAD_DATA_PIN  7
+#define NESPAD_CLK_PIN    4
+#define NESPAD_LATCH_PIN  5
+#define NESPAD_DATA_PIN   7
+#define NESPAD_DATA2_PIN  8
 
 /* I2S Audio */
 #define HAS_I2S 1

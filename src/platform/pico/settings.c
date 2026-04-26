@@ -470,12 +470,16 @@ static void change_value(menu_item_t item, int dir) {
     switch (item) {
         case MENU_PLAYER1: {
             /* P1: Any (only if P2=Disabled), NES1, NES2, USB, Keyboard — never Disabled.
-             * Skip modes already claimed by P2. */
+             * Skip modes already claimed by P2.
+             * Boards without a second NES port (no NESPAD_DATA2_PIN) also hide NES2. */
             uint8_t m = edit_settings.p1_mode;
             for (int i = 0; i < INPUT_MODE_COUNT; i++) {
                 m = (uint8_t)((m + INPUT_MODE_COUNT + dir) % INPUT_MODE_COUNT);
                 if (m == INPUT_MODE_DISABLED) continue;
                 if (m == INPUT_MODE_ANY && edit_settings.p2_mode != INPUT_MODE_DISABLED) continue;
+#ifndef NESPAD_DATA2_PIN
+                if (m == INPUT_MODE_NES2) continue;
+#endif
                 if (mode_taken_by_other(m, edit_settings.p2_mode)) continue;
                 break;
             }
@@ -484,11 +488,15 @@ static void change_value(menu_item_t item, int dir) {
         }
         case MENU_PLAYER2: {
             /* P2: NES1, NES2, USB, Keyboard, Disabled — never Any.
-             * Skip modes already claimed by P1. */
+             * Skip modes already claimed by P1.
+             * Boards without a second NES port (no NESPAD_DATA2_PIN) also hide NES2. */
             uint8_t m = edit_settings.p2_mode;
             for (int i = 0; i < INPUT_MODE_COUNT; i++) {
                 m = (uint8_t)((m + INPUT_MODE_COUNT + dir) % INPUT_MODE_COUNT);
                 if (m == INPUT_MODE_ANY) continue;
+#ifndef NESPAD_DATA2_PIN
+                if (m == INPUT_MODE_NES2) continue;
+#endif
                 if (mode_taken_by_other(m, edit_settings.p1_mode)) continue;
                 break;
             }
@@ -498,10 +506,12 @@ static void change_value(menu_item_t item, int dir) {
                 edit_settings.p1_mode == INPUT_MODE_ANY) {
                 /* Pick first device not taken by P2 */
                 for (uint8_t c = INPUT_MODE_NES1; c <= INPUT_MODE_KEYBOARD; c++) {
-                    if (c != edit_settings.p2_mode) {
-                        edit_settings.p1_mode = c;
-                        break;
-                    }
+                    if (c == edit_settings.p2_mode) continue;
+#ifndef NESPAD_DATA2_PIN
+                    if (c == INPUT_MODE_NES2) continue;
+#endif
+                    edit_settings.p1_mode = c;
+                    break;
                 }
             }
             break;
@@ -1297,6 +1307,14 @@ void settings_load(void) {
 
     f_close(&file);
     f_unmount("");
+
+#ifndef NESPAD_DATA2_PIN
+    /* Boards without a second NES port can't honor NES2 — migrate it so the
+     * user isn't stuck with a dead input assignment from a previous build. */
+    if (g_settings.p1_mode == INPUT_MODE_NES2) g_settings.p1_mode = INPUT_MODE_NES1;
+    if (g_settings.p2_mode == INPUT_MODE_NES2) g_settings.p2_mode = INPUT_MODE_DISABLED;
+#endif
+
     printf("Settings loaded from %s\n", SETTINGS_PATH);
 }
 

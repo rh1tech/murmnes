@@ -1301,9 +1301,17 @@ static void real_main(void)
         rom_selector_preload_index();
     }
 
-    /* Init NES gamepad PIO driver */
+    /* Init NES gamepad PIO driver.
+     * Boards with two controller ports define NESPAD_DATA2_PIN; others
+     * pass NESPAD_DATA_PIN_NONE to run in single-pad mode. */
+#ifdef NESPAD_DATA2_PIN
+    const uint8_t nespad_data2 = NESPAD_DATA2_PIN;
+#else
+    const uint8_t nespad_data2 = NESPAD_DATA_PIN_NONE;
+#endif
     nespad_begin(clock_get_hz(clk_sys) / 1000,
-                 NESPAD_CLK_PIN, NESPAD_DATA_PIN, NESPAD_LATCH_PIN);
+                 NESPAD_CLK_PIN, NESPAD_DATA_PIN, nespad_data2,
+                 NESPAD_LATCH_PIN);
 
     /* Init PS/2 keyboard */
     ps2kbd_init();

@@ -28,11 +28,16 @@
 #define DPAD_LT     0x100000
 #define DPAD_RT     0x400000
 
+/* Sentinel for "no second data pin" — hardware only has one controller port. */
+#define NESPAD_DATA_PIN_NONE 0xFF
+
 extern uint32_t nespad_state;  // (S)NES Joystick1
 extern uint32_t nespad_state2; // (S)NES Joystick2
 
+/* Initialize PIO gamepad reader.
+ * Pass NESPAD_DATA_PIN_NONE for data2Pin on boards with a single NES port. */
 extern bool nespad_begin(uint32_t cpu_khz, uint8_t clkPin, uint8_t dataPin,
-                         uint8_t latPin);
+                         uint8_t data2Pin, uint8_t latPin);
 
 extern void nespad_read(void);
 extern void nespad_read_start(void);
