@@ -46,12 +46,11 @@
 static uint32_t pwm_wrap = 4095;
 static uint32_t pwm_center = 2047;
 
-/* Ring buffer sized so two buffers cover the largest per-frame sample
+/* Ring buffer sized so a single chunk fits the largest per-frame sample
  * delivery (Dendy = 882 samples @ 44.1 kHz / 50 fps) with headroom.
- * pwm_audio_push_samples splits longer pushes across multiple claims, so
- * a single buffer does not need to hold a whole frame. 768 leaves ~17 ms
- * of playback between refills, well above the 20 ms emulation frame. */
-#define DMA_BUFFER_SAMPLES 768
+ * Per-chunk size is runtime-configurable via pwm_audio_set_frame_rate so
+ * consumer pacing matches the emulator (60 fps NTSC, 50 fps Dendy). */
+#define DMA_BUFFER_SAMPLES 960
 #define DMA_BUFFER_COUNT   2
 #define PREROLL_BUFFERS    2
 
@@ -86,7 +85,7 @@ static bool initialized = false;
 static uint audio_slice = 0;
 static bool stereo_same_slice = false;
 static uint32_t cached_sample_rate = 0;
-static uint32_t dma_xfer_count = 0;
+static volatile uint32_t dma_xfer_count = 0;
 
 static void __not_in_flash_func(pwm_audio_dma_irq_handler)(void) {
     uint32_t ints = PWM_AUDIO_INTS;
@@ -158,7 +157,15 @@ void pwm_audio_init(uint pin_l, uint pin_r, uint32_t sample_rate) {
         for (int i = 0; i < DMA_BUFFER_SAMPLES; i++)
             dma_bufs[b][i] = silence;
 
-    dma_xfer_count = DMA_BUFFER_SAMPLES;
+    /* Default to NTSC pacing (60 fps). pwm_audio_set_frame_rate(50) switches
+     * the per-chunk transfer count for Dendy. Must match producer rate so
+     * the emulator isn't back-pressured and silence-padded per frame. */
+    {
+        uint32_t n = sample_rate / 60;
+        if (n < 1) n = 1;
+        if (n > DMA_BUFFER_SAMPLES) n = DMA_BUFFER_SAMPLES;
+        dma_xfer_count = n;
+    }
 
     /* Claim DMA channels and configure ping-pong chain */
     dma_channel_abort(PWM_DMA_CH_A);
@@ -311,6 +318,17 @@ void pwm_audio_push_samples(const int16_t *buf, int count) {
         commit_buf(idx, (uint32_t)chunk);
         pos += chunk;
     }
+}
+
+void pwm_audio_set_frame_rate(int frame_rate) {
+    if (frame_rate <= 0) return;
+    if (cached_sample_rate == 0) return; /* init hasn't run yet */
+    uint32_t n = cached_sample_rate / (uint32_t)frame_rate;
+    if (n < 1) n = 1;
+    if (n > DMA_BUFFER_SAMPLES) n = DMA_BUFFER_SAMPLES;
+    /* Single-word write is atomic on Cortex-M33; the DMA IRQ handler
+     * picks it up when arming the next chain-to transfer. */
+    dma_xfer_count = n;
 }
 
 void pwm_audio_fill_silence(int count) {

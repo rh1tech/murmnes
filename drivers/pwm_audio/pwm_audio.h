@@ -29,6 +29,10 @@ void pwm_audio_push_samples(const int16_t *buf, int count);
 /* Drop `count` samples' worth of silence at the configured sample rate. */
 void pwm_audio_fill_silence(int count);
 
+/* Resize the per-DMA-chunk transfer count to match the emulation frame rate.
+ * frame_rate = 60 for NTSC, 50 for Dendy. Mirror of i2s_audio_set_frame_rate. */
+void pwm_audio_set_frame_rate(int frame_rate);
+
 #ifdef __cplusplus
 }
 #endif

@@ -43,7 +43,8 @@ static volatile bool i2s_running = false;
 
 static PIO i2s_pio;
 static uint i2s_sm;
-static uint32_t dma_xfer_count;
+static volatile uint32_t dma_xfer_count;
+static uint32_t cached_sample_rate = 0;
 
 static void i2s_dma_irq_handler(void) {
 #if defined(VGA_HSTX)
@@ -86,7 +87,13 @@ void i2s_audio_init(uint data_pin, uint clock_pin_base, uint32_t sample_rate) {
 #else
     i2s_pio = pio0;
 #endif
-    dma_xfer_count = sample_rate / 50;  /* sized for 50fps (Dendy); NTSC frames fit easily */
+    cached_sample_rate = sample_rate;
+    /* Default to NTSC pacing (60 fps). Call i2s_audio_set_frame_rate(50)
+     * after init if the active ROM runs at Dendy timing. Using the wrong
+     * divisor makes the PIO drain slower than the emulator produces,
+     * throttling frame rate and injecting per-frame silence pads — audio
+     * ends up slowed and buzzy. */
+    dma_xfer_count = sample_rate / 60;
     if (dma_xfer_count > DMA_BUFFER_SAMPLES) dma_xfer_count = DMA_BUFFER_SAMPLES;
 
     /* Configure GPIO for PIO */
@@ -258,6 +265,18 @@ void i2s_audio_fill_silence(int count) {
         i2s_write_buf((const int16_t *)silence, (uint32_t)chunk);
         remaining -= chunk;
     }
+}
+
+void i2s_audio_set_frame_rate(int frame_rate) {
+    if (frame_rate <= 0) return;
+    if (cached_sample_rate == 0) return; /* init hasn't run yet */
+    uint32_t n = cached_sample_rate / (uint32_t)frame_rate;
+    if (n < 1) n = 1;
+    if (n > DMA_BUFFER_SAMPLES) n = DMA_BUFFER_SAMPLES;
+    /* Single-word write is atomic on Cortex-M33; the DMA IRQ handler
+     * reads dma_xfer_count to program the next chain-to transfer, so the
+     * new value takes effect within one buffer. */
+    dma_xfer_count = n;
 }
 
 void i2s_audio_shutdown(void) {

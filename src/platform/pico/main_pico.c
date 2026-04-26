@@ -253,6 +253,7 @@ static void ensure_i2s_initialized(void) {
 #ifdef HAS_I2S
     if (!i2s_initialized) {
         i2s_audio_init(I2S_DATA_PIN, I2S_CLOCK_PIN_BASE, SAMPLE_RATE);
+        i2s_audio_set_frame_rate(g_settings.emu_mode == EMULATION_MODE_DENDY ? 50 : 60);
         i2s_initialized = true;
     }
 #endif
@@ -263,6 +264,7 @@ static void ensure_i2s_initialized(void) {
 static void ensure_pwm_audio_initialized(void) {
     if (pwm_audio_initialized) return;
     pwm_audio_init(PWM_PIN0, PWM_PIN1, SAMPLE_RATE);
+    pwm_audio_set_frame_rate(g_settings.emu_mode == EMULATION_MODE_DENDY ? 50 : 60);
     pwm_audio_initialized = true;
 }
 
@@ -1314,6 +1316,18 @@ static void real_main(void)
     /* Apply emulation region before loading any ROM */
     qnes_set_region(g_settings.emu_mode == EMULATION_MODE_DENDY
                     ? QNES_REGION_DENDY : QNES_REGION_NTSC);
+
+    /* Keep audio chunk size aligned with the emulator's frame cadence so the
+     * I2S/PWM consumer drains at the same rate samples are produced. A
+     * mismatch back-pressures the producer (throttling video) and injects
+     * silence padding per frame, which audibly slows and distorts playback. */
+    {
+        int fps = (g_settings.emu_mode == EMULATION_MODE_DENDY) ? 50 : 60;
+#ifdef HAS_I2S
+        if (i2s_initialized) i2s_audio_set_frame_rate(fps);
+#endif
+        if (pwm_audio_initialized) pwm_audio_set_frame_rate(fps);
+    }
 
     /* Apply per-scanline sprite limit (ON = 8/scanline hardware behavior, OFF = render all) */
     qnes_set_sprite_limit(g_settings.sprite_limit ? 1 : 0);

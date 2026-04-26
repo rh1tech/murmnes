@@ -38,6 +38,15 @@ void i2s_audio_push_samples(const int16_t *buf, int count);
 void i2s_audio_fill_silence(int count);
 
 /**
+ * Resize the per-DMA-chunk transfer count to match the emulation frame rate.
+ * Called whenever region switches between NTSC (60 fps) and Dendy (50 fps);
+ * keeps consumer throughput aligned with producer throughput so the emulator
+ * is not back-pressured.
+ * @param frame_rate Emulation frame rate in Hz (60 for NTSC, 50 for Dendy)
+ */
+void i2s_audio_set_frame_rate(int frame_rate);
+
+/**
  * Shut down I2S audio (stop DMA, disable PIO SM).
  */
 void i2s_audio_shutdown(void);
