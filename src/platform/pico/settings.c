@@ -984,6 +984,8 @@ void settings_load(void) {
     f_mkdir("/nes");
     f_mkdir("/nes/.save");
     f_mkdir("/nes/.cheats");
+    f_mkdir("/nes/.overrides");
+    f_mkdir("/nes/palettes");
 
     FIL file;
     if (f_open(&file, SETTINGS_PATH, FA_READ) != FR_OK) {
@@ -1127,7 +1129,18 @@ void settings_load(void) {
     printf("Settings loaded from %s\n", SETTINGS_PATH);
 }
 
+/* Defined in main_pico.c — true while a per-ROM override file has been
+ * applied to g_settings this session. In that state we deliberately
+ * don't persist g_settings back to /nes/.settings, because a menu save
+ * would overwrite the user's global preferences with the per-ROM values. */
+extern bool settings_overrides_active(void);
+
 void settings_save(void) {
+
+    if (settings_overrides_active()) {
+        printf("settings: skipping save — per-ROM overrides active\n");
+        return;
+    }
 
     if (f_mount(&shared_fs, "", 1) != FR_OK) return;
 

@@ -14,6 +14,39 @@
 
 #include "palettes.h"
 
+#include "ff.h"
+
+palette_rgb_t palette_custom[64];
+int palette_custom_loaded = 0;
+
+int palette_load_custom(const char *path)
+{
+    palette_custom_loaded = 0;
+
+    FIL f;
+    FRESULT fr = f_open(&f, path, FA_READ);
+    if (fr != FR_OK) return -1;
+
+    /* Read the first 192 bytes (64 RGB triples). Accepts both the
+     * 192-byte base-only format and the 1536-byte full-master-table
+     * format — emphasis rows are synthesized at lookup time, so we only
+     * need the 64 base colors anyway. */
+    uint8_t buf[192];
+    UINT br = 0;
+    fr = f_read(&f, buf, sizeof(buf), &br);
+    f_close(&f);
+
+    if (fr != FR_OK || br != sizeof(buf)) return -2;
+
+    for (int i = 0; i < 64; i++) {
+        palette_custom[i].r = buf[i * 3 + 0];
+        palette_custom[i].g = buf[i * 3 + 1];
+        palette_custom[i].b = buf[i * 3 + 2];
+    }
+    palette_custom_loaded = 1;
+    return 0;
+}
+
 /* QuickNES default: matches nes_colors[0..63] in nes_emu.cpp. Acts as the
  * "NES" selector option and as a fallback when a custom palette fails to
  * load. */

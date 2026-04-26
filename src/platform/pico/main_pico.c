@@ -376,8 +376,10 @@ static inline qnes_rgb_t resolve_nes_color(int idx, const qnes_rgb_t *qnes_color
             case PALETTE_FIREBRANDX: p = palette_firebrandx; break;
             case PALETTE_WAVEBEAM:   p = palette_wavebeam;   break;
             case PALETTE_COMPOSITE:  p = palette_composite;  break;
-            case PALETTE_NES:
             case PALETTE_CUSTOM:
+                p = palette_custom_loaded ? palette_custom : palette_nes_default;
+                break;
+            case PALETTE_NES:
             default:                 p = palette_nes_default; break;
         }
         qnes_rgb_t c;
@@ -400,6 +402,189 @@ static inline uint8_t overscan_enum_to_px(uint8_t v) {
         case OVERSCAN_8:
         default:           return 8;
     }
+}
+
+/* Per-ROM session overrides. Set when apply_rom_overrides() saw any key,
+ * consulted by settings.c::settings_save() via settings_overrides_active()
+ * to avoid persisting override values back into the global settings file. */
+static bool g_overrides_active = false;
+bool settings_overrides_active(void) { return g_overrides_active; }
+
+/* Parse a single "key = value" line and apply the subset of keys that
+ * per-ROM overrides understand. Returns 1 if the line matched a key,
+ * 0 otherwise. Mirrors (a subset of) the parser in settings.c. */
+static int apply_override_line(const char *line)
+{
+    /* Tiny, local INI parser — duplicated rather than exported from
+     * settings.c so both files stay self-contained. */
+    while (*line == ' ' || *line == '\t') line++;
+    if (*line == '\0' || *line == '\r' || *line == '\n' ||
+        *line == '#' || *line == ';')
+        return 0;
+
+    /* Split key / value on '=' */
+    const char *eq = line;
+    while (*eq && *eq != '=') eq++;
+    if (*eq != '=') return 0;
+    const char *kend = eq;
+    while (kend > line && (kend[-1] == ' ' || kend[-1] == '\t')) kend--;
+    size_t klen = (size_t)(kend - line);
+
+    const char *v = eq + 1;
+    while (*v == ' ' || *v == '\t') v++;
+
+    char val[64];
+    size_t vi = 0;
+    while (*v && *v != '\r' && *v != '\n' && vi < sizeof(val) - 1) {
+        val[vi++] = *v++;
+    }
+    while (vi > 0 && (val[vi-1] == ' ' || val[vi-1] == '\t')) vi--;
+    val[vi] = '\0';
+
+    #define KEY_IS(s) (klen == sizeof(s) - 1 && strncmp(line, (s), klen) == 0)
+
+    if (KEY_IS("region") || KEY_IS("mode")) {
+        int r = (strcmp(val, "dendy") == 0 || strcmp(val, "1") == 0)
+                    ? EMULATION_MODE_DENDY : EMULATION_MODE_NES;
+        g_settings.emu_mode = (uint8_t)r;
+        qnes_set_region(r == EMULATION_MODE_DENDY
+                        ? QNES_REGION_DENDY : QNES_REGION_NTSC);
+        return 1;
+    }
+    if (KEY_IS("palette")) {
+        int idx = -1;
+        if (strcmp(val, "nes") == 0)             idx = PALETTE_NES;
+        else if (strcmp(val, "firebrandx") == 0) idx = PALETTE_FIREBRANDX;
+        else if (strcmp(val, "wavebeam") == 0)   idx = PALETTE_WAVEBEAM;
+        else if (strcmp(val, "composite") == 0)  idx = PALETTE_COMPOSITE;
+        else if (strcmp(val, "custom") == 0)     idx = PALETTE_CUSTOM;
+        if (idx >= 0) {
+            g_settings.palette = (uint8_t)idx;
+            return 1;
+        }
+        return 0;
+    }
+    if (KEY_IS("sprite_limit")) {
+        g_settings.sprite_limit = (strcmp(val, "off") == 0 || strcmp(val, "0") == 0) ? 0 : 1;
+        qnes_set_sprite_limit(g_settings.sprite_limit);
+        return 1;
+    }
+    if (KEY_IS("bg_disabled")) {
+        g_settings.bg_disabled = (strcmp(val, "on") == 0 || strcmp(val, "1") == 0) ? 1 : 0;
+        qnes_set_bg_disabled(g_settings.bg_disabled);
+        return 1;
+    }
+    if (KEY_IS("chan_mute")) {
+        unsigned v2 = 0;
+        if (sscanf(val, "%x", &v2) != 1) {
+            if (sscanf(val, "%u", &v2) != 1) v2 = 0;
+        }
+        g_settings.chan_mute_mask = (uint8_t)(v2 & 0x1F);
+        qnes_set_channel_mute_mask(g_settings.chan_mute_mask);
+        return 1;
+    }
+    if (KEY_IS("overscan")) {
+        if (strcmp(val, "off") == 0 || strcmp(val, "0") == 0) g_settings.overscan = OVERSCAN_OFF;
+        else if (strcmp(val, "16") == 0)                      g_settings.overscan = OVERSCAN_16;
+        else                                                  g_settings.overscan = OVERSCAN_8;
+        return 1;
+    }
+    if (KEY_IS("scanlines")) {
+        if (strcmp(val, "off") == 0)      g_settings.scanlines = SCANLINES_OFF;
+        else if (strcmp(val, "25") == 0)  g_settings.scanlines = SCANLINES_25;
+        else if (strcmp(val, "50") == 0)  g_settings.scanlines = SCANLINES_50;
+        else if (strcmp(val, "75") == 0)  g_settings.scanlines = SCANLINES_75;
+        return 1;
+    }
+    if (KEY_IS("par") || KEY_IS("aspect")) {
+        g_settings.par = (strcmp(val, "8:7") == 0) ? PAR_8_7 : PAR_1_1;
+        return 1;
+    }
+    if (KEY_IS("audio_eq")) {
+        int idx = AUDIO_EQ_NES;
+        if (strcmp(val, "famicom") == 0) idx = AUDIO_EQ_FAMICOM;
+        else if (strcmp(val, "tv") == 0) idx = AUDIO_EQ_TV;
+        else if (strcmp(val, "flat") == 0) idx = AUDIO_EQ_FLAT;
+        else if (strcmp(val, "crisp") == 0) idx = AUDIO_EQ_CRISP;
+        else if (strcmp(val, "tinny") == 0) idx = AUDIO_EQ_TINNY;
+        g_settings.audio_eq = (uint8_t)idx;
+        qnes_set_audio_eq(idx);
+        return 1;
+    }
+    if (KEY_IS("turbo_a")) {
+        int r = TURBO_OFF;
+        if (strcmp(val, "10") == 0) r = TURBO_10;
+        else if (strcmp(val, "15") == 0) r = TURBO_15;
+        else if (strcmp(val, "30") == 0) r = TURBO_30;
+        g_settings.turbo_a = (uint8_t)r;
+        return 1;
+    }
+    if (KEY_IS("turbo_b")) {
+        int r = TURBO_OFF;
+        if (strcmp(val, "10") == 0) r = TURBO_10;
+        else if (strcmp(val, "15") == 0) r = TURBO_15;
+        else if (strcmp(val, "30") == 0) r = TURBO_30;
+        g_settings.turbo_b = (uint8_t)r;
+        return 1;
+    }
+    if (KEY_IS("swap_ab")) {
+        g_settings.swap_ab = (strcmp(val, "on") == 0 || strcmp(val, "1") == 0) ? 1 : 0;
+        return 1;
+    }
+    #undef KEY_IS
+    return 0;
+}
+
+/* Apply per-ROM setting overrides from /nes/.overrides/{rom}.ini.
+ * Values land in g_settings and are pushed to the live QuickNES state
+ * where relevant. settings_save() consults settings_overrides_active()
+ * to avoid persisting overridden values into the global config. */
+static void apply_rom_overrides(void)
+{
+    g_overrides_active = false;
+    if (g_rom_name[0] == '\0') return;
+
+    FATFS fs;
+    if (f_mount(&fs, "", 1) != FR_OK) return;
+
+    char path[128];
+    snprintf(path, sizeof(path), "/nes/.overrides/%s.ini", g_rom_name);
+
+    FIL f;
+    if (f_open(&f, path, FA_READ) != FR_OK) {
+        f_unmount("");
+        return;
+    }
+
+    char line[128];
+    int applied = 0;
+    while (f_gets(line, sizeof(line), &f)) {
+        if (apply_override_line(line)) applied++;
+    }
+    f_close(&f);
+    f_unmount("");
+
+    if (applied > 0) {
+        g_overrides_active = true;
+        printf("overrides: applied=%d from %s\n", applied, path);
+    }
+
+    /* Push the (possibly-overridden) runtime state into the scanline
+     * callback's overscan_px global. */
+    scanline_overscan_px = overscan_enum_to_px(g_settings.overscan);
+}
+
+/* Try to load the custom palette file from SD. Silent if missing —
+ * PALETTE_CUSTOM falls back to palette_nes_default when unloaded. */
+static void load_custom_palette_if_needed(void)
+{
+    if (palette_custom_loaded) return;
+    FATFS fs;
+    if (f_mount(&fs, "", 1) != FR_OK) return;
+    int r = palette_load_custom("/nes/palettes/custom.pal");
+    if (r == 0)
+        printf("palette: loaded /nes/palettes/custom.pal\n");
+    f_unmount("");
 }
 
 /* Apply any Game Genie codes found in /nes/.cheats/{rom_name}.txt to
@@ -1118,6 +1303,8 @@ static void real_main(void)
             if (qnes_load_rom_inplace(sd_rom_buf, rom_size) == 0) {
                 printf("Emulator initialized OK\n");
                 rom_loaded = true;
+                load_custom_palette_if_needed();
+                apply_rom_overrides();
                 apply_cheat_file();
             }
         }
@@ -1134,6 +1321,8 @@ static void real_main(void)
             if (qnes_load_rom_inplace(sd_rom, sd_rom_size) == 0) {
                 printf("SD ROM loaded (fallback)\n");
                 rom_loaded = true;
+                load_custom_palette_if_needed();
+                apply_rom_overrides();
                 apply_cheat_file();
             }
             if (!rom_loaded && !psram_available && sd_rom_buf)
@@ -1149,6 +1338,8 @@ static void real_main(void)
             rom_loaded = true;
             if (g_rom_name[0] == '\0')
                 snprintf(g_rom_name, sizeof(g_rom_name), "flash_rom");
+            load_custom_palette_if_needed();
+            apply_rom_overrides();
             apply_cheat_file();
         }
     }
