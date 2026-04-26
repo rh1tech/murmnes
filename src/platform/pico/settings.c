@@ -92,11 +92,19 @@ typedef enum {
     MENU_ITEM_COUNT
 } menu_item_t;
 
-/* Emulation submenu items */
+/* Emulation submenu items. Grouped by topic: region/PPU, video, audio,
+ * input. The menu is scrollable so adding more rows here costs nothing. */
 typedef enum {
-    EMU_MENU_MODE,
-    EMU_MENU_SPRITE_LIMIT,
-    EMU_MENU_AUDIO_EQ,
+    EMU_MENU_MODE,          /* region: NES / DENDY */
+    EMU_MENU_SPRITE_LIMIT,  /* PPU */
+    EMU_MENU_OVERSCAN,      /* video */
+    EMU_MENU_SCANLINES,
+    EMU_MENU_PAR,
+    EMU_MENU_PALETTE,
+    EMU_MENU_AUDIO_EQ,      /* audio */
+    EMU_MENU_TURBO_A,       /* input */
+    EMU_MENU_TURBO_B,
+    EMU_MENU_SWAP_AB,
     EMU_MENU_BACK,
     EMU_MENU_ITEM_COUNT
 } emu_menu_item_t;
@@ -125,6 +133,29 @@ static const char *sprite_limit_names[] = {"OFF", "ON"};
 static const char *audio_eq_names[] = {"NES", "FAMICOM", "TV", "FLAT", "CRISP", "TINNY"};
 static const char *audio_eq_ini_names[] = {"nes", "famicom", "tv", "flat", "crisp", "tinny"};
 
+/* Overscan labels (must match OVERSCAN_*) */
+static const char *overscan_names[] = {"OFF", "8 PX", "16 PX"};
+static const char *overscan_ini_names[] = {"off", "8", "16"};
+
+/* Scanline effect labels (must match SCANLINES_*) */
+static const char *scanlines_names[] = {"OFF", "25%", "50%", "75%"};
+static const char *scanlines_ini_names[] = {"off", "25", "50", "75"};
+
+/* Pixel aspect labels */
+static const char *par_names[] = {"1:1", "8:7"};
+static const char *par_ini_names[] = {"1:1", "8:7"};
+
+/* Palette labels (PALETTE_CUSTOM is reserved for Batch 3 and skipped in UI) */
+static const char *palette_names[] = {"NES", "FIREBRANDX", "WAVEBEAM", "COMPOSITE", "CUSTOM"};
+static const char *palette_ini_names[] = {"nes", "firebrandx", "wavebeam", "composite", "custom"};
+
+/* Turbo rate labels */
+static const char *turbo_names[] = {"OFF", "10 HZ", "15 HZ", "30 HZ"};
+static const char *turbo_ini_names[] = {"off", "10", "15", "30"};
+
+/* Generic ON/OFF labels */
+static const char *on_off_names[] = {"OFF", "ON"};
+
 /* Global settings */
 settings_t g_settings = {
     .p1_mode = INPUT_MODE_ANY,
@@ -143,6 +174,13 @@ settings_t g_settings = {
     .emu_mode = EMULATION_MODE_NES,
     .sprite_limit = 1,
     .audio_eq = AUDIO_EQ_NES,
+    .overscan = OVERSCAN_8,   /* match the hardcoded behavior the scanline callback had before */
+    .scanlines = SCANLINES_OFF,
+    .par = PAR_1_1,
+    .palette = PALETTE_NES,
+    .turbo_a = TURBO_OFF,
+    .turbo_b = TURBO_OFF,
+    .swap_ab = 0,
 };
 
 /* Local copy for editing */
@@ -297,7 +335,14 @@ static const char *get_emu_menu_label(emu_menu_item_t item) {
     switch (item) {
         case EMU_MENU_MODE:         return "MODE";
         case EMU_MENU_SPRITE_LIMIT: return "SPRITE LIMIT";
+        case EMU_MENU_OVERSCAN:     return "OVERSCAN";
+        case EMU_MENU_SCANLINES:    return "SCANLINES";
+        case EMU_MENU_PAR:          return "ASPECT";
+        case EMU_MENU_PALETTE:      return "PALETTE";
         case EMU_MENU_AUDIO_EQ:     return "AUDIO EQ";
+        case EMU_MENU_TURBO_A:      return "TURBO A";
+        case EMU_MENU_TURBO_B:      return "TURBO B";
+        case EMU_MENU_SWAP_AB:      return "SWAP A/B";
         case EMU_MENU_BACK:         return "BACK";
         default:                    return "";
     }
@@ -340,8 +385,15 @@ static const char *get_emu_value_text(emu_menu_item_t item) {
     switch (item) {
         case EMU_MENU_MODE:         return emu_mode_names[edit_settings.emu_mode];
         case EMU_MENU_SPRITE_LIMIT: return sprite_limit_names[edit_settings.sprite_limit ? 1 : 0];
+        case EMU_MENU_OVERSCAN:     return overscan_names[edit_settings.overscan < OVERSCAN_COUNT ? edit_settings.overscan : 0];
+        case EMU_MENU_SCANLINES:    return scanlines_names[edit_settings.scanlines < SCANLINES_COUNT ? edit_settings.scanlines : 0];
+        case EMU_MENU_PAR:          return par_names[edit_settings.par < PAR_COUNT ? edit_settings.par : 0];
+        case EMU_MENU_PALETTE:      return palette_names[edit_settings.palette < PALETTE_COUNT ? edit_settings.palette : 0];
         case EMU_MENU_AUDIO_EQ:
             return audio_eq_names[edit_settings.audio_eq < AUDIO_EQ_COUNT ? edit_settings.audio_eq : 0];
+        case EMU_MENU_TURBO_A:      return turbo_names[edit_settings.turbo_a < TURBO_COUNT ? edit_settings.turbo_a : 0];
+        case EMU_MENU_TURBO_B:      return turbo_names[edit_settings.turbo_b < TURBO_COUNT ? edit_settings.turbo_b : 0];
+        case EMU_MENU_SWAP_AB:      return on_off_names[edit_settings.swap_ab ? 1 : 0];
         default:                    return NULL;
     }
 }
@@ -435,6 +487,16 @@ static void change_value(menu_item_t item, int dir) {
     }
 }
 
+/* Cycle palette skipping PALETTE_CUSTOM — a custom palette is only
+ * selectable once one has been loaded from SD (Batch 3). */
+static uint8_t cycle_palette(uint8_t cur, int dir) {
+    int n = PALETTE_COUNT - 1; /* exclude CUSTOM */
+    int v = cur;
+    v = ((v + n + dir) % n);
+    if (v < 0) v += n;
+    return (uint8_t)v;
+}
+
 static void change_emu_value(emu_menu_item_t item, int dir) {
     switch (item) {
         case EMU_MENU_MODE:
@@ -447,10 +509,32 @@ static void change_emu_value(emu_menu_item_t item, int dir) {
             qnes_set_sprite_limit(edit_settings.sprite_limit ? 1 : 0);
             (void)dir;
             break;
+        case EMU_MENU_OVERSCAN:
+            edit_settings.overscan = (uint8_t)((edit_settings.overscan + OVERSCAN_COUNT + dir) % OVERSCAN_COUNT);
+            break;
+        case EMU_MENU_SCANLINES:
+            edit_settings.scanlines = (uint8_t)((edit_settings.scanlines + SCANLINES_COUNT + dir) % SCANLINES_COUNT);
+            break;
+        case EMU_MENU_PAR:
+            edit_settings.par = (uint8_t)((edit_settings.par + PAR_COUNT + dir) % PAR_COUNT);
+            break;
+        case EMU_MENU_PALETTE:
+            edit_settings.palette = cycle_palette(edit_settings.palette, dir);
+            break;
         case EMU_MENU_AUDIO_EQ:
             edit_settings.audio_eq = (uint8_t)((edit_settings.audio_eq + AUDIO_EQ_COUNT + dir) % AUDIO_EQ_COUNT);
             /* Apply live — tonal change, no ROM reload needed. */
             qnes_set_audio_eq(edit_settings.audio_eq);
+            break;
+        case EMU_MENU_TURBO_A:
+            edit_settings.turbo_a = (uint8_t)((edit_settings.turbo_a + TURBO_COUNT + dir) % TURBO_COUNT);
+            break;
+        case EMU_MENU_TURBO_B:
+            edit_settings.turbo_b = (uint8_t)((edit_settings.turbo_b + TURBO_COUNT + dir) % TURBO_COUNT);
+            break;
+        case EMU_MENU_SWAP_AB:
+            edit_settings.swap_ab = edit_settings.swap_ab ? 0 : 1;
+            (void)dir;
             break;
         default:
             break;
@@ -921,6 +1005,57 @@ void settings_load(void) {
                 }
             }
         }
+        else if (parse_ini_line(line, "overscan", value, sizeof(value))) {
+            for (int i = 0; i < OVERSCAN_COUNT; i++) {
+                if (strcmp(value, overscan_ini_names[i]) == 0) {
+                    g_settings.overscan = (uint8_t)i;
+                    break;
+                }
+            }
+        }
+        else if (parse_ini_line(line, "scanlines", value, sizeof(value))) {
+            for (int i = 0; i < SCANLINES_COUNT; i++) {
+                if (strcmp(value, scanlines_ini_names[i]) == 0) {
+                    g_settings.scanlines = (uint8_t)i;
+                    break;
+                }
+            }
+        }
+        else if (parse_ini_line(line, "par", value, sizeof(value))) {
+            for (int i = 0; i < PAR_COUNT; i++) {
+                if (strcmp(value, par_ini_names[i]) == 0) {
+                    g_settings.par = (uint8_t)i;
+                    break;
+                }
+            }
+        }
+        else if (parse_ini_line(line, "palette", value, sizeof(value))) {
+            for (int i = 0; i < PALETTE_COUNT; i++) {
+                if (strcmp(value, palette_ini_names[i]) == 0) {
+                    g_settings.palette = (uint8_t)i;
+                    break;
+                }
+            }
+        }
+        else if (parse_ini_line(line, "turbo_a", value, sizeof(value))) {
+            for (int i = 0; i < TURBO_COUNT; i++) {
+                if (strcmp(value, turbo_ini_names[i]) == 0) {
+                    g_settings.turbo_a = (uint8_t)i;
+                    break;
+                }
+            }
+        }
+        else if (parse_ini_line(line, "turbo_b", value, sizeof(value))) {
+            for (int i = 0; i < TURBO_COUNT; i++) {
+                if (strcmp(value, turbo_ini_names[i]) == 0) {
+                    g_settings.turbo_b = (uint8_t)i;
+                    break;
+                }
+            }
+        }
+        else if (parse_ini_line(line, "swap_ab", value, sizeof(value))) {
+            g_settings.swap_ab = (strcmp(value, "on") == 0 || strcmp(value, "1") == 0) ? 1 : 0;
+        }
         else if (parse_ini_line(line, "selector", value, sizeof(value))) {
             if (strcmp(value, "browser") == 0 || strcmp(value, "1") == 0)
                 g_settings.selector_mode = SELECTOR_MODE_BROWSER;
@@ -954,7 +1089,7 @@ void settings_save(void) {
         return;
     }
 
-    char buf[600];
+    char buf[800];
     static const char *selector_mode_ini_names[] = {"carousel", "browser"};
     static const char *emu_mode_ini_names[] = {"nes", "dendy"};
     snprintf(buf, sizeof(buf),
@@ -966,6 +1101,13 @@ void settings_save(void) {
         "audio_eq = %s\n"
         "mode = %s\n"
         "sprite_limit = %s\n"
+        "overscan = %s\n"
+        "scanlines = %s\n"
+        "par = %s\n"
+        "palette = %s\n"
+        "turbo_a = %s\n"
+        "turbo_b = %s\n"
+        "swap_ab = %s\n"
         "selector = %s\n"
         "browser_path = %s\n"
         "browser_file = %s\n",
@@ -976,6 +1118,13 @@ void settings_save(void) {
         audio_eq_ini_names[g_settings.audio_eq < AUDIO_EQ_COUNT ? g_settings.audio_eq : 0],
         emu_mode_ini_names[g_settings.emu_mode < EMULATION_MODE_COUNT ? g_settings.emu_mode : 0],
         g_settings.sprite_limit ? "on" : "off",
+        overscan_ini_names[g_settings.overscan < OVERSCAN_COUNT ? g_settings.overscan : 0],
+        scanlines_ini_names[g_settings.scanlines < SCANLINES_COUNT ? g_settings.scanlines : 0],
+        par_ini_names[g_settings.par < PAR_COUNT ? g_settings.par : 0],
+        palette_ini_names[g_settings.palette < PALETTE_COUNT ? g_settings.palette : 0],
+        turbo_ini_names[g_settings.turbo_a < TURBO_COUNT ? g_settings.turbo_a : 0],
+        turbo_ini_names[g_settings.turbo_b < TURBO_COUNT ? g_settings.turbo_b : 0],
+        g_settings.swap_ab ? "on" : "off",
         selector_mode_ini_names[g_settings.selector_mode & 1],
         g_settings.browser_path,
         g_settings.browser_file);
@@ -1145,9 +1294,14 @@ static void menu_wait_vsync(void) {
     vsync_flag = 0;
 }
 
-/* ─── Emulation submenu ──────────────────────────────────────────── */
+/* ─── Emulation submenu (scrollable) ─────────────────────────────── */
 
-static void draw_emulation_menu(uint8_t *screen, int selected) {
+/* Number of rows visible at once in the submenu viewport. Window slides
+ * so the selection stays inside this band. Sized to leave room for the
+ * title, the separator, and the bottom help line. */
+#define EMU_MENU_VIEW_ROWS 12
+
+static void draw_emulation_menu(uint8_t *screen, int selected, int scroll_top) {
     memset(screen, PAL_BG, SCREEN_WIDTH * SCREEN_HEIGHT);
 
     const char *title = "EMULATION";
@@ -1155,8 +1309,15 @@ static void draw_emulation_menu(uint8_t *screen, int selected) {
     draw_text(screen, title_x, MENU_TITLE_Y, title, PAL_WHITE);
     draw_hline(screen, MENU_X, MENU_TITLE_Y + FONT_HEIGHT + 4, SCREEN_WIDTH - 2 * MENU_X, PAL_GRAY);
 
+    int rows = EMU_MENU_VIEW_ROWS;
+    if (rows > EMU_MENU_ITEM_COUNT) rows = EMU_MENU_ITEM_COUNT;
+    int last_top = EMU_MENU_ITEM_COUNT - rows;
+    if (scroll_top < 0) scroll_top = 0;
+    if (scroll_top > last_top) scroll_top = last_top;
+
     int y = MENU_START_Y;
-    for (int i = 0; i < EMU_MENU_ITEM_COUNT; i++) {
+    for (int row = 0; row < rows; row++) {
+        int i = scroll_top + row;
         emu_menu_item_t item = (emu_menu_item_t)i;
         uint8_t color = (i == selected) ? PAL_YELLOW : PAL_WHITE;
 
@@ -1172,12 +1333,23 @@ static void draw_emulation_menu(uint8_t *screen, int selected) {
             draw_text(screen, VALUE_X, y, buf, color);
         }
 
-        /* Hint for MODE when changed from current active value */
-        if (item == EMU_MENU_MODE && edit_settings.emu_mode != g_settings.emu_mode) {
-            draw_text(screen, MENU_X, y + FONT_HEIGHT + 1, "RESTART TO APPLY", PAL_GRAY);
-        }
-
         y += LINE_HEIGHT;
+    }
+
+    /* Scroll indicators in the right margin (up arrow if more above,
+     * down arrow if more below). */
+    if (scroll_top > 0) {
+        draw_char(screen, SCREEN_WIDTH - MENU_X + 4, MENU_START_Y, '^', PAL_GRAY);
+    }
+    if (scroll_top + rows < EMU_MENU_ITEM_COUNT) {
+        draw_char(screen, SCREEN_WIDTH - MENU_X + 4,
+                  MENU_START_Y + (rows - 1) * LINE_HEIGHT, 'V', PAL_GRAY);
+    }
+
+    /* Hint for MODE when the edit value differs from live — drawn outside
+     * the scroll window so it stays visible even when scrolled past MODE. */
+    if (edit_settings.emu_mode != g_settings.emu_mode) {
+        draw_text(screen, MENU_X, 210, "RESTART TO APPLY MODE", PAL_GRAY);
     }
 
     const char *help = "UP/DOWN:SELECT  LEFT/RIGHT:CHANGE  B:BACK";
@@ -1185,8 +1357,22 @@ static void draw_emulation_menu(uint8_t *screen, int selected) {
     draw_text(screen, help_x, 220, help, PAL_GRAY);
 }
 
+/* Slide the scroll window so `selected` stays inside it. Keeps one row
+ * of context above/below where possible. */
+static int clamp_scroll(int selected, int scroll_top) {
+    int rows = EMU_MENU_VIEW_ROWS;
+    if (rows > EMU_MENU_ITEM_COUNT) rows = EMU_MENU_ITEM_COUNT;
+    if (selected < scroll_top) scroll_top = selected;
+    if (selected >= scroll_top + rows) scroll_top = selected - rows + 1;
+    int last_top = EMU_MENU_ITEM_COUNT - rows;
+    if (scroll_top < 0) scroll_top = 0;
+    if (scroll_top > last_top) scroll_top = last_top;
+    return scroll_top;
+}
+
 static void emulation_menu_show(uint8_t *screen_buffer) {
     int selected = EMU_MENU_MODE;
+    int scroll_top = 0;
     uint32_t hold_counter = 0;
     const uint32_t REPEAT_DELAY = 10;
     const uint32_t REPEAT_RATE = 3;
@@ -1196,7 +1382,7 @@ static void emulation_menu_show(uint8_t *screen_buffer) {
         menu_wait_vsync();
         if (read_menu_buttons() == 0) break;
         audio_fill_silence(SAMPLE_RATE / 60);
-        draw_emulation_menu(screen_buffer, selected);
+        draw_emulation_menu(screen_buffer, selected, scroll_top);
         pending_pitch = SCREEN_WIDTH;
         video_post_frame(screen_buffer, SCREEN_WIDTH);
     }
@@ -1237,7 +1423,8 @@ static void emulation_menu_show(uint8_t *screen_buffer) {
 
         if (pressed & BTN_B) break;
 
-        draw_emulation_menu(screen_buffer, selected);
+        scroll_top = clamp_scroll(selected, scroll_top);
+        draw_emulation_menu(screen_buffer, selected, scroll_top);
         audio_fill_silence(SAMPLE_RATE / 60);
         pending_pitch = SCREEN_WIDTH;
         video_post_frame(screen_buffer, SCREEN_WIDTH);
@@ -1248,7 +1435,7 @@ static void emulation_menu_show(uint8_t *screen_buffer) {
         menu_wait_vsync();
         if (read_menu_buttons() == 0) break;
         audio_fill_silence(SAMPLE_RATE / 60);
-        draw_emulation_menu(screen_buffer, selected);
+        draw_emulation_menu(screen_buffer, selected, scroll_top);
         pending_pitch = SCREEN_WIDTH;
         video_post_frame(screen_buffer, SCREEN_WIDTH);
     }

@@ -363,6 +363,54 @@ void video_wait_vsync(void) {
 #endif
 }
 
+#include "palettes.h"
+
+/* Resolve the NES palette index to an RGB tuple, honoring the currently
+ * selected palette option. Base colors (0..63) come from the selected
+ * palette; emphasis rows (64..511) fall back to the QuickNES table. */
+static inline qnes_rgb_t resolve_nes_color(int idx, const qnes_rgb_t *qnes_colors) {
+    if (idx < 0 || idx >= 512) idx = 0x0F;
+    if (idx < 64) {
+        const palette_rgb_t *p;
+        switch (g_settings.palette) {
+            case PALETTE_FIREBRANDX: p = palette_firebrandx; break;
+            case PALETTE_WAVEBEAM:   p = palette_wavebeam;   break;
+            case PALETTE_COMPOSITE:  p = palette_composite;  break;
+            case PALETTE_NES:
+            case PALETTE_CUSTOM:
+            default:                 p = palette_nes_default; break;
+        }
+        qnes_rgb_t c;
+        c.r = p[idx].r; c.g = p[idx].g; c.b = p[idx].b;
+        return c;
+    }
+    return qnes_colors[idx];
+}
+
+/* Overscan crop in NES pixels (0/8/16). Read by the HSTX scanline
+ * callback every line; updated from apply_runtime_settings(). Declared
+ * volatile so Core 0 writes are visible to Core 1 without a lock. */
+volatile uint8_t __not_in_flash("scanline_state") scanline_overscan_px = 8;
+
+/* Translate the settings_t overscan enum to a pixel count. */
+static inline uint8_t overscan_enum_to_px(uint8_t v) {
+    switch (v) {
+        case OVERSCAN_OFF: return 0;
+        case OVERSCAN_16:  return 16;
+        case OVERSCAN_8:
+        default:           return 8;
+    }
+}
+
+/* Push settings into the runtime state they affect. Called at startup
+ * (after settings_load) and after every settings_menu_show() return. */
+static void apply_runtime_settings(void) {
+    scanline_overscan_px = overscan_enum_to_px(g_settings.overscan);
+    /* Palette change: update_palette() reads g_settings.palette every
+     * time it runs, so the next update_palette call (from ROM load or
+     * menu return) picks up the selection. No per-frame work here. */
+}
+
 #ifdef VIDEO_COMPOSITE
 /* Sync NES palette to composite TV driver */
 void video_sync_palette(void) {
@@ -371,10 +419,8 @@ void video_sync_palette(void) {
     const qnes_rgb_t *colors = qnes_get_color_table();
     if (!pal || !colors) return;
     for (int i = 0; i < pal_size && i < 256; i++) {
-        int idx = pal[i];
-        if (idx < 0 || idx >= 512) idx = 0x0F;
-        const qnes_rgb_t *c = &colors[idx];
-        graphics_set_palette(i, ((uint32_t)c->r << 16) | ((uint32_t)c->g << 8) | c->b);
+        qnes_rgb_t c = resolve_nes_color(pal[i], colors);
+        graphics_set_palette(i, ((uint32_t)c.r << 16) | ((uint32_t)c.g << 8) | c.b);
     }
     graphics_set_palette(200, 0x000000);
 }
@@ -405,10 +451,8 @@ void video_sync_palette(void) {
     if (!pal || !colors) return;
     int limit = SELECT_VGA ? 256 : 251;
     for (int i = 0; i < pal_size && i < limit; i++) {
-        int idx = pal[i];
-        if (idx < 0 || idx >= 512) idx = 0x0F;
-        const qnes_rgb_t *c = &colors[idx];
-        graphics_set_palette(i, ((uint32_t)c->r << 16) | ((uint32_t)c->g << 8) | c->b);
+        qnes_rgb_t c = resolve_nes_color(pal[i], colors);
+        graphics_set_palette(i, ((uint32_t)c.r << 16) | ((uint32_t)c.g << 8) | c.b);
     }
     if (!SELECT_VGA) graphics_restore_sync_colors();
 }
@@ -432,7 +476,7 @@ static void update_palette(int buf_idx) {
     video_sync_palette();
 }
 #else
-/* Build RGB565 palette from QuickNES frame palette + color table */
+/* Build RGB565 palette from QuickNES frame palette + selected color table */
 static void update_palette(int buf_idx)
 {
     int pal_size = 0;
@@ -443,11 +487,8 @@ static void update_palette(int buf_idx)
         return;
 
     for (int i = 0; i < pal_size && i < 256; i++) {
-        int idx = pal[i];
-        if (idx < 0 || idx >= 512)
-            idx = 0x0F; /* black */
-        const qnes_rgb_t *c = &colors[idx];
-        uint16_t c16 = ((c->r & 0xF8) << 8) | ((c->g & 0xFC) << 3) | (c->b >> 3);
+        qnes_rgb_t c = resolve_nes_color(pal[i], colors);
+        uint16_t c16 = ((c.r & 0xF8) << 8) | ((c.g & 0xFC) << 3) | (c.b >> 3);
         rgb565_palette_32[buf_idx][i] = c16 | ((uint32_t)c16 << 16);
     }
 #if defined(VGA_HSTX)
@@ -464,8 +505,9 @@ void __not_in_flash("scanline") scanline_callback(
     (void)v_scanline;
 
     uint32_t nes_line = active_line < 480 ? active_line / 2 : 0;
+    int crop = (int)scanline_overscan_px;
 
-    if (nes_line < 8 || nes_line >= NES_HEIGHT - 8) {
+    if ((int)nes_line < crop || (int)nes_line >= NES_HEIGHT - crop) {
         for (int i = 32; i < 288; i++)
             dst[i] = 0;
         return;
@@ -474,11 +516,12 @@ void __not_in_flash("scanline") scanline_callback(
     const uint8_t *src = frame_pixels + nes_line * frame_pitch;
     uint32_t *out = dst + 32;
 
-    out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0;
-    out[4] = 0; out[5] = 0; out[6] = 0; out[7] = 0;
-    out += 8;
+    /* Left overscan pillar */
+    for (int i = 0; i < crop; i++) out[i] = 0;
+    out += crop;
 
-    for (int x = 8; x < NES_WIDTH - 8; x += 4) {
+    /* Middle — straight 2x pixel replication (each u32 = two packed RGB565) */
+    for (int x = crop; x < NES_WIDTH - crop; x += 4) {
         uint32_t p = *(const uint32_t *)(src + x);
         out[0] = rgb565_palette_32[pal_read_idx][p & 0xFF];
         out[1] = rgb565_palette_32[pal_read_idx][(p >> 8) & 0xFF];
@@ -487,8 +530,8 @@ void __not_in_flash("scanline") scanline_callback(
         out += 4;
     }
 
-    out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0;
-    out[4] = 0; out[5] = 0; out[6] = 0; out[7] = 0;
+    /* Right overscan pillar */
+    for (int i = 0; i < crop; i++) out[i] = 0;
 }
 #endif
 
@@ -844,6 +887,7 @@ static void real_main(void)
     }
 
     settings_load();
+    apply_runtime_settings();
 
     /* Phase 1: scan SD directory and load CRC cache (fast, no HDMI needed) */
     int num_roms = 0;
@@ -1082,7 +1126,9 @@ static void real_main(void)
                     reset_requested = true;
                     break;
                 }
-                /* Restore game palette after menu */
+                /* Push menu-driven settings into runtime state, then
+                 * restore the game palette (which honors g_settings.palette). */
+                apply_runtime_settings();
                 update_palette(pal_write_idx);
                 pending_pal_idx = pal_write_idx;
                 pal_write_idx ^= 1;
@@ -1138,6 +1184,47 @@ static void real_main(void)
                 case INPUT_MODE_USB2:     joypad2 = usb2_joy; break;
                 case INPUT_MODE_KEYBOARD: joypad2 = kbd_joy; break;
                 case INPUT_MODE_DISABLED: break;
+            }
+
+            /* Turbo / autofire + A/B swap.
+             *
+             * Bit layout (matches nespad_to_qnes): A=0, B=1, Sel=2, Start=3,
+             * U=4, D=5, L=6, R=7. When the corresponding turbo rate is non-OFF
+             * AND the user is actually holding the button, we gate it through
+             * a frame counter so the button reads as pressed only on a subset
+             * of frames (producing rapid-fire at 10/15/30 Hz assuming 60 fps).
+             * Applied symmetrically to both players. */
+            static uint32_t turbo_frame = 0;
+            turbo_frame++;
+            int turbo_a_mask = 0, turbo_b_mask = 0;
+            /* Frame-divider thresholds: at 60 fps, period of 6 frames = 10 Hz,
+             * period 4 = 15 Hz, period 2 = 30 Hz. Mask on frames where the
+             * half-period says "pressed". */
+            switch (g_settings.turbo_a) {
+                case TURBO_10: if (((turbo_frame / 3) & 1) == 0) turbo_a_mask = 0x01; else turbo_a_mask = 0x00; break;
+                case TURBO_15: if (((turbo_frame / 2) & 1) == 0) turbo_a_mask = 0x01; else turbo_a_mask = 0x00; break;
+                case TURBO_30: if ((turbo_frame & 1) == 0)        turbo_a_mask = 0x01; else turbo_a_mask = 0x00; break;
+                case TURBO_OFF:
+                default:       turbo_a_mask = 0x01; break; /* no gating */
+            }
+            switch (g_settings.turbo_b) {
+                case TURBO_10: if (((turbo_frame / 3) & 1) == 0) turbo_b_mask = 0x02; else turbo_b_mask = 0x00; break;
+                case TURBO_15: if (((turbo_frame / 2) & 1) == 0) turbo_b_mask = 0x02; else turbo_b_mask = 0x00; break;
+                case TURBO_30: if ((turbo_frame & 1) == 0)        turbo_b_mask = 0x02; else turbo_b_mask = 0x00; break;
+                case TURBO_OFF:
+                default:       turbo_b_mask = 0x02; break;
+            }
+            /* Apply per-button turbo gates, then optional A/B swap. */
+            int *jps[2] = { &joypad1, &joypad2 };
+            for (int k = 0; k < 2; k++) {
+                int v = *jps[k];
+                if (g_settings.turbo_a != TURBO_OFF) v = (v & ~0x01) | (v & turbo_a_mask);
+                if (g_settings.turbo_b != TURBO_OFF) v = (v & ~0x02) | (v & turbo_b_mask);
+                if (g_settings.swap_ab) {
+                    int a = v & 0x01, b = (v >> 1) & 0x01;
+                    v = (v & ~0x03) | b | (a << 1);
+                }
+                *jps[k] = v;
             }
 
 #ifdef VGA_HSTX_AUTOSTART

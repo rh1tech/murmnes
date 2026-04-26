@@ -51,6 +51,39 @@
 #define AUDIO_EQ_TINNY   5
 #define AUDIO_EQ_COUNT   6
 
+// Overscan crop (rows hidden top+bottom AND columns hidden left+right)
+#define OVERSCAN_OFF  0  // show full 256x240 (except the always-clipped black frame)
+#define OVERSCAN_8    1  // hide 8 rows / 8 cols (classic NTSC TV safe area)
+#define OVERSCAN_16   2  // hide 16 rows / 16 cols (more aggressive)
+#define OVERSCAN_COUNT 3
+
+// Scanline effect — dim every other scanline to mimic CRT gap
+#define SCANLINES_OFF 0
+#define SCANLINES_25  1  // 25% dim
+#define SCANLINES_50  2  // 50% dim
+#define SCANLINES_75  3  // 75% dim
+#define SCANLINES_COUNT 4
+
+// Pixel aspect ratio
+#define PAR_1_1  0  // square pixels, 256x240
+#define PAR_8_7  1  // NES-correct 8:7 (stretch to ~292x240 / 4:3 window)
+#define PAR_COUNT 2
+
+// Palette selector
+#define PALETTE_NES        0  // QuickNES default
+#define PALETTE_FIREBRANDX 1  // FirebrandX
+#define PALETTE_WAVEBEAM   2  // Wavebeam
+#define PALETTE_COMPOSITE  3  // Composite direct
+#define PALETTE_CUSTOM     4  // Loaded from SD (Batch 3)
+#define PALETTE_COUNT      5
+
+// Turbo rate (A or B held → rapid press at N Hz)
+#define TURBO_OFF 0
+#define TURBO_10  1  // 10 Hz
+#define TURBO_15  2  // 15 Hz
+#define TURBO_30  3  // 30 Hz
+#define TURBO_COUNT 4
+
 typedef struct {
     uint8_t p1_mode;        // Player 1 input mode (INPUT_MODE_*)
     uint8_t p2_mode;        // Player 2 input mode (INPUT_MODE_*)
@@ -60,6 +93,13 @@ typedef struct {
     uint8_t emu_mode;       // Emulation mode (EMULATION_MODE_*)
     uint8_t sprite_limit;   // 1 = 8 sprites/scanline (default), 0 = unlimited (no flicker)
     uint8_t audio_eq;       // Audio equalizer preset (AUDIO_EQ_*)
+    uint8_t overscan;       // Overscan crop (OVERSCAN_*)
+    uint8_t scanlines;      // Scanline effect (SCANLINES_*)
+    uint8_t par;            // Pixel aspect ratio (PAR_*)
+    uint8_t palette;        // Palette selector (PALETTE_*)
+    uint8_t turbo_a;        // Turbo A rate (TURBO_*)
+    uint8_t turbo_b;        // Turbo B rate (TURBO_*)
+    uint8_t swap_ab;        // 1 = swap A and B buttons
     char browser_path[280]; // Last file browser directory
     char browser_file[256]; // Last launched file name (in browser_path)
 } settings_t;
