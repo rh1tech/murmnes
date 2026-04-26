@@ -2188,69 +2188,6 @@ static const uint8_t logo_pal_map[9] = {
 
 /* ─── Welcome screen helpers ──────────────────────────────────────── */
 
-/* Tunnel background:
- *   Classic raytraced demoscene tunnel. For each screen pixel we want
- *   (angle, distance-from-centre) mapped to texture coords, then shifted by
- *   time. Computing atan2/hypot per pixel is expensive on RP2350; instead we
- *   sample a quarter (64x60) LUT and 4x4 block-copy into the framebuffer.
- *
- *   The 64x60 LUT covers the bottom-right quadrant of screen (pixel step of
- *   4 in each axis). Each entry packs a repeated u-coord (upper byte) and
- *   v-coord (lower byte) inside a 16-bit word, where u ~ angle/(2π)*256 and
- *   v ~ 256*TEX_SCALE / distance. 4x4 nearest-neighbour is plenty for this
- *   effect — the inherent swirl hides the step.
- *
- *   Colour ramp: reuse the 6x6x6 cube already in the palette, picking a
- *   blue→magenta gradient driven by (u + v + time) and a concentric XOR ring
- *   so it reads as demoscene neon rather than a flat warp. */
-#define TUN_LUT_W 64
-#define TUN_LUT_H 60
-#define TUN_BLOCK 4
-
-static uint16_t tunnel_lut[TUN_LUT_H][TUN_LUT_W];
-static bool tunnel_lut_ready = false;
-
-/* Integer atan2 returning 0..255 over a full turn. Good enough for the
- * demoscene vibe — monotone per quadrant, no sqrt, no FP. */
-static int atan2_u8(int y, int x) {
-    int ay = y < 0 ? -y : y;
-    int ax = x < 0 ? -x : x;
-    int angle;
-    if (ax + ay == 0) return 0;
-    if (ax >= ay) {
-        /* 0..32 over [0, π/4] using ay/ax approximation */
-        angle = (ay * 32) / (ax ? ax : 1);
-    } else {
-        angle = 64 - (ax * 32) / (ay ? ay : 1);
-    }
-    if (x < 0) angle = 128 - angle;
-    if (y < 0) angle = 256 - angle;
-    return angle & 0xFF;
-}
-
-static void build_tunnel_lut(void) {
-    /* Centre of the screen */
-    const int cx = SCREEN_W / 2;
-    const int cy = SCREEN_H / 2;
-    for (int ly = 0; ly < TUN_LUT_H; ly++) {
-        for (int lx = 0; lx < TUN_LUT_W; lx++) {
-            int sx = lx * TUN_BLOCK + TUN_BLOCK / 2 - cx;
-            int sy = ly * TUN_BLOCK + TUN_BLOCK / 2 - cy;
-            /* Squared distance; clamp near centre to avoid divide-by-zero. */
-            int d2 = sx * sx + sy * sy;
-            if (d2 < 16) d2 = 16;
-            /* v = inverse distance scaled — larger value near centre so the
-             * tunnel appears to recede toward the middle. 4096*16/d2 maxes
-             * at ~4096 at the centre and falls off toward the edges. */
-            int v = (4096 * 16) / d2;
-            if (v > 255) v = 255;
-            int u = atan2_u8(sy, sx);
-            tunnel_lut[ly][lx] = (uint16_t)((u << 8) | (v & 0xFF));
-        }
-    }
-    tunnel_lut_ready = true;
-}
-
 /* Map 3-bit r/g/b (0..7) into the 6×6×6 cube palette (0..5 each channel). */
 static inline uint8_t cube_rgb(int r, int g, int b) {
     r = (r * 5) / 7;
@@ -2259,58 +2196,80 @@ static inline uint8_t cube_rgb(int r, int g, int b) {
     return (uint8_t)(PAL_CUBE_BASE + r * 36 + g * 6 + b);
 }
 
-static uint8_t tunnel_palette[256];
+/* Starfield background:
+ *   A fixed pool of stars, each positioned in sub-pixel space (Q8.8) with a
+ *   depth-dependent velocity. Per frame we erase the previous pixel, advance
+ *   the star, wrap around at screen edges, and paint the new pixel. Three
+ *   brightness tiers (dim/mid/bright) give parallax depth without floats or
+ *   trig. */
+#define STAR_COUNT 72
 
-/* Build the tunnel colour ramp once: index = (u + v + xor_ring) & 0xFF,
- * ramp sweeps deep indigo → muted violet → dark magenta and back. Kept
- * in the low half of the 6×6×6 cube so the animation reads as an
- * atmospheric backdrop rather than foreground competition for the logo
- * and text. Max channel intensity ≈ level 2/5 of the cube ≈ 40% brightness. */
-static void build_tunnel_palette(void) {
-    for (int i = 0; i < 256; i++) {
-        /* Triangle wave in [0, 127] so the ramp wraps seamlessly. */
-        int t = i < 128 ? i : 255 - i;
-        /* Dark ramp: max r=2, g=1, b=2 (out of 7) → cube levels 1–2. */
-        int r = (t * 2) / 127;
-        int g = ((t < 64 ? 0 : (t - 64)) * 1) / 63;
-        int b = ((127 - t) * 2) / 127;
-        if (r > 2) r = 2;
-        if (g > 1) g = 1;
-        if (b > 2) b = 2;
-        tunnel_palette[i] = cube_rgb(r, g, b);
-    }
+typedef struct {
+    /* Q8.8 fixed-point position so slow stars can move fractionally. */
+    int32_t x, y;
+    /* Horizontal velocity in Q8.8 units per frame. Sign gives scroll
+     * direction; magnitude encodes depth. */
+    int16_t vx;
+    /* Previous integer pixel position — used to erase on the next frame. */
+    int16_t prev_x, prev_y;
+    /* Palette index for this star (chosen once at init from the depth tier). */
+    uint8_t color;
+    uint8_t _pad;
+} star_t;
+
+static star_t stars[STAR_COUNT];
+static bool stars_ready = false;
+
+/* Linear-congruential PRNG — avoids depending on rand() seeding. */
+static uint32_t star_rng_state = 0xC0FFEE17u;
+static uint32_t star_rng(void) {
+    star_rng_state = star_rng_state * 1664525u + 1013904223u;
+    return star_rng_state;
 }
 
-/* Render one frame of the tunnel into `fb`. 4x4 block fill per LUT entry,
- * so the inner loop writes 16 bytes per sample → ~15k samples/frame. */
-static void draw_tunnel(uint32_t frame) {
-    if (!tunnel_lut_ready) {
-        build_tunnel_lut();
-        build_tunnel_palette();
+static void init_starfield(void) {
+    /* Three depth tiers. Front stars are brighter and move faster; back
+     * stars are dimmer and barely drift. Colour comes from the 6×6×6
+     * cube so we stay inside the existing welcome palette. */
+    const uint8_t tier_color[3] = {
+        cube_rgb(2, 2, 3),   /* far: dim blue-grey */
+        cube_rgb(4, 4, 5),   /* mid: light blue */
+        cube_rgb(7, 7, 7),   /* near: white */
+    };
+    /* Velocity per tier in Q8.8 per frame. All scroll right-to-left. */
+    const int16_t tier_vx[3] = { -32, -80, -160 }; /* 0.125 / 0.31 / 0.625 px */
+
+    for (int i = 0; i < STAR_COUNT; i++) {
+        int tier = (int)(star_rng() % 3);
+        stars[i].x = (int32_t)(star_rng() % (SCREEN_W << 8));
+        stars[i].y = (int32_t)(star_rng() % (SCREEN_H << 8));
+        stars[i].vx = tier_vx[tier];
+        stars[i].color = tier_color[tier];
+        stars[i].prev_x = -1;
+        stars[i].prev_y = -1;
     }
-    /* Time offsets: u shifts slowly (spin), v shifts faster (rush forward). */
-    int u_shift = (int)(frame * 2);
-    int v_shift = (int)(frame * 3);
-    for (int ly = 0; ly < TUN_LUT_H; ly++) {
-        int y0 = ly * TUN_BLOCK;
-        for (int lx = 0; lx < TUN_LUT_W; lx++) {
-            uint16_t w = tunnel_lut[ly][lx];
-            int u = ((w >> 8) + u_shift) & 0xFF;
-            int v = ((w & 0xFF) + v_shift) & 0xFF;
-            /* XOR gives the concentric-ring moire a tunnel needs. */
-            int idx = (u ^ v) & 0xFF;
-            uint8_t c = tunnel_palette[idx];
-            /* 4x4 block write. Two 32-bit stores per row = 8 stores total. */
-            uint32_t c4 = c | (c << 8) | (c << 16) | (c << 24);
-            uint32_t *row = (uint32_t *)&fb[y0 * SCREEN_W + lx * TUN_BLOCK];
-            row[0] = c4;
-            row += SCREEN_W / 4;
-            row[0] = c4;
-            row += SCREEN_W / 4;
-            row[0] = c4;
-            row += SCREEN_W / 4;
-            row[0] = c4;
-        }
+    stars_ready = true;
+}
+
+/* Draw one frame of the starfield on top of a freshly-filled PAL_BG backdrop.
+ * The caller is responsible for the background fill — the star loop does a
+ * single pixel write per star and nothing else, so it costs ~72 writes per
+ * frame regardless of resolution. */
+static void draw_starfield(void) {
+    if (!stars_ready) init_starfield();
+
+    for (int i = 0; i < STAR_COUNT; i++) {
+        stars[i].x += stars[i].vx;
+        /* Wrap horizontally. Keep y fixed — pure sideways drift looks
+         * cleaner as a background than random walks. */
+        if (stars[i].x < 0) stars[i].x += (SCREEN_W << 8);
+        else if (stars[i].x >= (SCREEN_W << 8)) stars[i].x -= (SCREEN_W << 8);
+
+        int sx = stars[i].x >> 8;
+        int sy = stars[i].y >> 8;
+        stars[i].prev_x = (int16_t)sx;
+        stars[i].prev_y = (int16_t)sy;
+        fb_pixel(sx, sy, stars[i].color);
     }
 }
 
@@ -2337,14 +2296,20 @@ static void setup_welcome_palette(void) {
 }
 
 static void draw_filled_circle(int cx, int cy, int r, uint8_t color) {
-    int r2 = r * r;
+    /* Use the half-pixel test (2dx+1)^2 <= 4*(r^2 - dy^2) so each row's
+     * half-width matches a continuous-circle sample at the pixel centre.
+     * The naive integer test ((dx+1)^2 <= r^2-dy^2) produced four
+     * single-pixel stubs at the cardinal extremes because one row was
+     * allowed to poke past the reach of its neighbours. */
+    int four_r2 = 4 * r * r;
     for (int y = cy - r; y <= cy + r; y++) {
         if (y < 0 || y >= SCREEN_H) continue;
         int dy = y - cy;
-        int dx_max_sq = r2 - dy * dy;
-        /* Integer square root to find horizontal span */
+        int limit = four_r2 - 4 * dy * dy;
+        if (limit <= 0) continue; /* drop the collapsed top/bottom row */
+        /* Largest dx with (2*dx+1)^2 <= limit */
         int dx = 0;
-        while ((dx + 1) * (dx + 1) <= dx_max_sq) dx++;
+        while ((2 * dx + 3) * (2 * dx + 3) <= limit) dx++;
         int x0 = cx - dx;
         int x1 = cx + dx;
         if (x0 < 0) x0 = 0;
@@ -2424,10 +2389,10 @@ void welcome_screen_show(void) {
     while (1) {
         selector_wait_vsync();
 
-        /* Demoscene-style tunnel backdrop fills the frame first. The logo
-         * circle, controller, and text all draw on top so the tunnel never
-         * distracts from the UI. */
-        draw_tunnel(frame);
+        /* Starfield backdrop: full bg fill, then a small pool of parallax
+         * stars drifting right-to-left. Logo/text draw on top. */
+        fb_fill(PAL_BG);
+        draw_starfield();
 
         /* Light gray circle behind the logo */
         int circle_cx = SCREEN_W / 2;
