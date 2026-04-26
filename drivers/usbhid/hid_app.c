@@ -580,20 +580,33 @@ static uint16_t hid_to_kbd_state_bit(uint8_t keycode) {
 
 uint16_t usbhid_get_kbd_state(void) {
     uint16_t state = 0;
-    
+
     // Check each key in the current keyboard report
     for (int i = 0; i < 6; i++) {
         if (prev_kbd_report.keycode[i] != 0) {
             state |= hid_to_kbd_state_bit(prev_kbd_report.keycode[i]);
         }
     }
-    
+
     // Check modifier keys for Mode (Alt)
     if (prev_kbd_report.modifier & (KEYBOARD_MODIFIER_LEFTALT | KEYBOARD_MODIFIER_RIGHTALT)) {
         state |= 0x0800; // KBD_STATE_MODE
     }
-    
+
     return state;
+}
+
+int usbhid_ctrl_alt_del_pressed(void) {
+    uint8_t m = prev_kbd_report.modifier;
+    /* tinyusb modifier masks:
+     *   LEFTCTRL 0x01, RIGHTCTRL 0x10, LEFTALT 0x04, RIGHTALT 0x40. */
+    bool ctrl = (m & (KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTCTRL)) != 0;
+    bool alt  = (m & (KEYBOARD_MODIFIER_LEFTALT  | KEYBOARD_MODIFIER_RIGHTALT))  != 0;
+    if (!ctrl || !alt) return 0;
+    for (int i = 0; i < 6; i++) {
+        if (prev_kbd_report.keycode[i] == 0x4C) return 1;  // HID Delete
+    }
+    return 0;
 }
 
 int usbhid_get_raw_char(void) {

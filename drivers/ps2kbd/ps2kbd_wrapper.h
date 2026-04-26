@@ -56,6 +56,11 @@ int ps2kbd_get_key(int* pressed, unsigned char* key);
 uint16_t ps2kbd_get_state(void);
 int ps2kbd_get_raw_char(void);
 
+/* Returns non-zero when Ctrl+Alt+Del are all currently held.
+ * Del is intentionally not exposed in the KBD_STATE bitmask (no free bit
+ * and it's only used as part of this chord). */
+int ps2kbd_ctrl_alt_del_pressed(void);
+
 #ifdef __cplusplus
 }
 #endif

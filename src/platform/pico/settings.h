@@ -26,7 +26,8 @@
 #define AUDIO_MODE_I2S      1
 #define AUDIO_MODE_PWM      2
 #define AUDIO_MODE_DISABLED 3
-#define AUDIO_MODE_COUNT    4
+#define AUDIO_MODE_PCM5122  4  // Waveshare PCM5122 I2S DAC (Z0 only)
+#define AUDIO_MODE_COUNT    5
 
 // Volume range (0-100, step 10)
 #define VOLUME_MIN  0
@@ -123,6 +124,7 @@ extern settings_t g_settings;
 typedef enum {
     SETTINGS_RESULT_EXIT,
     SETTINGS_RESULT_RESET,
+    SETTINGS_RESULT_RESTART,   /* Soft-reset the currently running ROM */
 } settings_result_t;
 
 /**

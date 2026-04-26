@@ -36,6 +36,18 @@
 #define PWM_PIN0 10
 #define PWM_PIN1 11
 
+/* Waveshare PCM5122 Audio Board
+ * I2S data/clock layout must satisfy the existing audio_i2s.pio program:
+ * clock_pin_base = BCK (lower side-set bit), clock_pin_base+1 = LCK. BCK=18
+ * and LCK=19 are consecutive so the shared i2s_audio driver drives them
+ * directly. The DAC is configured once via I2C1 on GP2/GP3 to release
+ * standby and run its PLL from BCK (no MCLK is provided by the Pico). */
+#define HAS_PCM5122 1
+#define PCM5122_I2S_DATA       21
+#define PCM5122_I2S_CLOCK_BASE 18  /* BCK=18, LCK=19 */
+#define PCM5122_I2C_SDA        2
+#define PCM5122_I2C_SCL        3
+
 /* No TV/VGA */
 
 /* No UART logging */

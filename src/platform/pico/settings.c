@@ -87,6 +87,7 @@ typedef enum {
     MENU_SAVE_GAME,
     MENU_LOAD_GAME,
     MENU_SEPARATOR3,
+    MENU_RESTART,
     MENU_RESET,
     MENU_EXIT,
     MENU_ITEM_COUNT
@@ -130,8 +131,8 @@ static int status_frames = 0;
 /* Input mode names */
 static const char *input_mode_names[] = {"ANY", "NES GAMEPAD 1", "NES GAMEPAD 2", "USB GAMEPAD 1", "USB GAMEPAD 2", "KEYBOARD", "DISABLED"};
 
-/* Audio mode names */
-static const char *audio_mode_names[] = {"HDMI", "I2S", "PWM", "DISABLED"};
+/* Audio mode names (order must match AUDIO_MODE_*) */
+static const char *audio_mode_names[] = {"HDMI", "I2S", "PWM", "DISABLED", "PCM5122"};
 
 /* Emulation mode names */
 static const char *emu_mode_names[] = {"NES", "DENDY"};
@@ -347,6 +348,7 @@ static const char *get_menu_label(menu_item_t item) {
         case MENU_EMULATION: return "EMULATION";
         case MENU_SAVE_GAME: return (status_frames > 0) ? status_msg : "SAVE GAME";
         case MENU_LOAD_GAME: return "LOAD GAME";
+        case MENU_RESTART:   return "RESTART GAME";
         case MENU_RESET:     return "BACK TO ROM SELECTOR";
         case MENU_EXIT:      return "BACK TO GAME";
         default:             return "";
@@ -501,11 +503,20 @@ static void change_value(menu_item_t item, int dir) {
         case MENU_AUDIO: {
 #if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO)
   #ifdef HAS_I2S
+    #ifdef HAS_PCM5122
+            /* PIO video + I2S + PCM5122 (z0): I2S → PCM5122 → PWM → DISABLED */
+            static const uint8_t soft_modes[] = {
+                AUDIO_MODE_I2S, AUDIO_MODE_PCM5122, AUDIO_MODE_PWM, AUDIO_MODE_DISABLED
+            };
+            const int soft_n = 4;
+    #else
             /* PIO video + I2S: cycle I2S → PWM → DISABLED */
             static const uint8_t soft_modes[] = { AUDIO_MODE_I2S, AUDIO_MODE_PWM, AUDIO_MODE_DISABLED };
+            const int soft_n = 3;
+    #endif
             int idx = 0;
-            for (int m = 0; m < 3; m++) if (soft_modes[m] == edit_settings.audio_mode) { idx = m; break; }
-            idx = (idx + 3 + dir) % 3;
+            for (int m = 0; m < soft_n; m++) if (soft_modes[m] == edit_settings.audio_mode) { idx = m; break; }
+            idx = (idx + soft_n + dir) % soft_n;
             edit_settings.audio_mode = soft_modes[idx];
   #else
             /* PIO video, no I2S: cycle PWM → DISABLED */
@@ -523,8 +534,15 @@ static void change_value(menu_item_t item, int dir) {
             idx = (idx + 3 + dir) % 3;
             edit_settings.audio_mode = hstx_modes[idx];
 #else
-            /* HSTX + I2S (M2): full cycle HDMI → I2S → PWM → DISABLED */
-            edit_settings.audio_mode = (uint8_t)((edit_settings.audio_mode + AUDIO_MODE_COUNT + dir) % AUDIO_MODE_COUNT);
+            /* HSTX + I2S (M2): cycle HDMI → I2S → PWM → DISABLED.
+             * PCM5122 lives only on the Z0 audio HAT, so skip it here. */
+            static const uint8_t m2_modes[] = {
+                AUDIO_MODE_HDMI, AUDIO_MODE_I2S, AUDIO_MODE_PWM, AUDIO_MODE_DISABLED
+            };
+            int idx = 0;
+            for (int m = 0; m < 4; m++) if (m2_modes[m] == edit_settings.audio_mode) { idx = m; break; }
+            idx = (idx + 4 + dir) % 4;
+            edit_settings.audio_mode = m2_modes[idx];
 #endif
             break;
         }
@@ -1038,7 +1056,7 @@ static int parse_input_mode(const char *value) {
 }
 
 static const char *input_mode_ini_names[] = {"any", "nes1", "nes2", "usb1", "usb2", "keyboard", "disabled"};
-static const char *audio_mode_ini_names[] = {"hdmi", "i2s", "pwm", "disabled"};
+static const char *audio_mode_ini_names[] = {"hdmi", "i2s", "pwm", "disabled", "pcm5122"};
 
 void settings_load(void) {
 
@@ -1073,6 +1091,8 @@ void settings_load(void) {
                 g_settings.audio_mode = AUDIO_MODE_PWM;
             else if (strcmp(value, "disabled") == 0 || strcmp(value, "3") == 0)
                 g_settings.audio_mode = AUDIO_MODE_DISABLED;
+            else if (strcmp(value, "pcm5122") == 0 || strcmp(value, "4") == 0)
+                g_settings.audio_mode = AUDIO_MODE_PCM5122;
             else
                 g_settings.audio_mode = AUDIO_MODE_HDMI;
 #if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO)
@@ -1082,6 +1102,12 @@ void settings_load(void) {
 #ifndef HAS_I2S
             if (g_settings.audio_mode == AUDIO_MODE_I2S)
                 g_settings.audio_mode = AUDIO_MODE_PWM;
+#endif
+#ifndef HAS_PCM5122
+            /* PCM5122 only exists on the Z0 + Waveshare audio HAT; other
+             * boards fall back to their native I2S path. */
+            if (g_settings.audio_mode == AUDIO_MODE_PCM5122)
+                g_settings.audio_mode = AUDIO_MODE_I2S;
 #endif
         }
         else if (parse_ini_line(line, "volume", value, sizeof(value))) {
@@ -1724,10 +1750,11 @@ settings_result_t settings_menu_show(uint8_t *screen_buffer) {
                 prev_buttons = read_menu_buttons();
                 continue;
             }
-            if (selected == MENU_RESET) {
+            if (selected == MENU_RESET || selected == MENU_RESTART) {
                 g_settings = edit_settings;
                 settings_save();
-                /* Wait for buttons to be released before returning */
+                /* Wait for buttons to be released before returning so the
+                 * reset doesn't immediately re-trigger on a held Start. */
                 for (int i = 0; i < 60; i++) {
                     menu_wait_vsync();
                     audio_fill_silence(SAMPLE_RATE / 60);
@@ -1736,7 +1763,9 @@ settings_result_t settings_menu_show(uint8_t *screen_buffer) {
                     video_post_frame(screen_buffer, SCREEN_WIDTH);
                     if (read_menu_buttons() == 0) break;
                 }
-                return SETTINGS_RESULT_RESET;
+                return (selected == MENU_RESTART)
+                    ? SETTINGS_RESULT_RESTART
+                    : SETTINGS_RESULT_RESET;
             }
             /* For value items, A/Start cycles forward */
             change_value((menu_item_t)selected, 1);

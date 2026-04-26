@@ -43,6 +43,10 @@ static volatile bool i2s_running = false;
 
 static PIO i2s_pio;
 static uint i2s_sm;
+static uint i2s_offset;
+static uint i2s_data_pin;
+static uint i2s_clock_base;
+static bool i2s_claimed = false;
 static volatile uint32_t dma_xfer_count;
 static uint32_t cached_sample_rate = 0;
 
@@ -112,11 +116,14 @@ void i2s_audio_init(uint data_pin, uint clock_pin_base, uint32_t sample_rate) {
 
     /* Claim a PIO0 state machine */
     i2s_sm = pio_claim_unused_sm(i2s_pio, true);
+    i2s_claimed = true;
+    i2s_data_pin = data_pin;
+    i2s_clock_base = clock_pin_base;
     printf("I2S: PIO0 SM%u\n", i2s_sm);
 
     /* Load PIO program */
-    uint offset = pio_add_program(i2s_pio, &audio_i2s_program);
-    audio_i2s_program_init(i2s_pio, i2s_sm, offset, data_pin, clock_pin_base);
+    i2s_offset = pio_add_program(i2s_pio, &audio_i2s_program);
+    audio_i2s_program_init(i2s_pio, i2s_sm, i2s_offset, data_pin, clock_pin_base);
     pio_sm_clear_fifos(i2s_pio, i2s_sm);
 
     /* Clock divider: sys_clk * 4 / sample_rate (PIO outputs 1 bit per 2 clocks,
@@ -280,6 +287,7 @@ void i2s_audio_set_frame_rate(int frame_rate) {
 }
 
 void i2s_audio_shutdown(void) {
+    if (!i2s_claimed) return;
     i2s_running = false;
     pio_sm_set_enabled(i2s_pio, i2s_sm, false);
     irq_set_enabled(AUDIO_DMA_IRQ, false);
@@ -308,4 +316,15 @@ void i2s_audio_shutdown(void) {
 
     bufs_free_mask = (1u << DMA_BUFFER_COUNT) - 1u;
     preroll_count = 0;
+
+    /* Release PIO program + SM so the driver can re-init on different pins
+     * (e.g. switching between onboard I2S and an external DAC at runtime). */
+    pio_remove_program(i2s_pio, &audio_i2s_program, i2s_offset);
+    pio_sm_unclaim(i2s_pio, i2s_sm);
+    /* Hand GPIOs back to SIO so the new init's gpio_set_function call can
+     * cleanly reassign them (to either PIO or I2C). */
+    gpio_set_function(i2s_data_pin,      GPIO_FUNC_SIO);
+    gpio_set_function(i2s_clock_base,    GPIO_FUNC_SIO);
+    gpio_set_function(i2s_clock_base + 1, GPIO_FUNC_SIO);
+    i2s_claimed = false;
 }

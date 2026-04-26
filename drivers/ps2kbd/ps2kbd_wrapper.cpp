@@ -129,7 +129,22 @@ static unsigned char hid_to_nes(uint8_t code) {
     }
 }
 
+/* Raw state for the Ctrl+Alt+Del hotkey. Ctrl and Alt come from the HID
+ * modifier byte; Del (HID keycode 0x4C) is a regular key. All three live
+ * outside the KBD_STATE_ bitmask because we're out of free bits there and
+ * this chord is only needed inside the gameplay loop. */
+static volatile uint8_t  g_kbd_modifier  = 0;
+static volatile bool     g_kbd_del_held  = false;
+
 static void key_handler(hid_keyboard_report_t *curr, hid_keyboard_report_t *prev) {
+    // Mirror modifier byte + Del state for the Ctrl+Alt+Del chord detector.
+    g_kbd_modifier = curr->modifier;
+    bool del_held = false;
+    for (int i = 0; i < 6; i++) {
+        if (curr->keycode[i] == 0x4C) { del_held = true; break; }
+    }
+    g_kbd_del_held = del_held;
+
     // Check keys - new key presses
     for (int i = 0; i < 6; i++) {
         if (curr->keycode[i] != 0) {
@@ -230,4 +245,12 @@ extern "C" uint16_t ps2kbd_get_state(void) {
 
 extern "C" int ps2kbd_get_raw_char(void) {
     return raw_char_pop();
+}
+
+extern "C" int ps2kbd_ctrl_alt_del_pressed(void) {
+    /* KEYBOARD_MODIFIER_LEFTCTRL=0x01, RIGHTCTRL=0x10, LEFTALT=0x04, RIGHTALT=0x40 */
+    uint8_t m = g_kbd_modifier;
+    bool ctrl = (m & 0x11) != 0;
+    bool alt  = (m & 0x44) != 0;
+    return (ctrl && alt && g_kbd_del_held) ? 1 : 0;
 }

@@ -44,6 +44,9 @@
 #include "rom_selector.h"
 #include "i2s_audio.h"
 #include "pwm_audio.h"
+#ifdef HAS_PCM5122
+#include "pcm5122.h"
+#endif
 #include "uart_logging.h"
 #include "ff.h"
 #include "hardware/spi.h"
@@ -246,18 +249,43 @@ static void hdmi_fill_silence(int count)
 #endif /* !VIDEO_COMPOSITE && !HDMI_PIO */
 
 /* ─── Audio routing ───────────────────────────────────────────────── */
-static bool i2s_initialized = false;
+/* active_i2s_mode tracks which physical pin set the i2s driver is wired to
+ * so that toggling between onboard I2S and an external PCM5122 DAC in the
+ * settings menu tears down PIO/DMA cleanly before re-initializing on the
+ * other pins. 0 = uninitialized, 1 = onboard I2S, 2 = PCM5122. */
+static int active_i2s_mode = 0;
 static bool pwm_audio_initialized = false;
+#ifdef HAS_PCM5122
+static bool pcm5122_i2c_configured = false;
+#endif
 
 static void ensure_i2s_initialized(void) {
 #ifdef HAS_I2S
-    if (!i2s_initialized) {
-        i2s_audio_init(I2S_DATA_PIN, I2S_CLOCK_PIN_BASE, SAMPLE_RATE);
-        i2s_audio_set_frame_rate(g_settings.emu_mode == EMULATION_MODE_DENDY ? 50 : 60);
-        i2s_initialized = true;
-    }
+    if (active_i2s_mode == 1) return;
+    if (active_i2s_mode != 0) i2s_audio_shutdown();
+    i2s_audio_init(I2S_DATA_PIN, I2S_CLOCK_PIN_BASE, SAMPLE_RATE);
+    i2s_audio_set_frame_rate(g_settings.emu_mode == EMULATION_MODE_DENDY ? 50 : 60);
+    active_i2s_mode = 1;
 #endif
 }
+
+#ifdef HAS_PCM5122
+static void ensure_pcm5122_initialized(void) {
+    if (active_i2s_mode == 2) return;
+    if (active_i2s_mode != 0) i2s_audio_shutdown();
+
+    /* One-time I2C control: release standby, run from BCK. Pins, baud, and
+     * register programming all live in drivers/pcm5122/pcm5122.c. */
+    if (!pcm5122_i2c_configured) {
+        pcm5122_init(PCM5122_I2C_SDA, PCM5122_I2C_SCL);
+        pcm5122_i2c_configured = true;
+    }
+
+    i2s_audio_init(PCM5122_I2S_DATA, PCM5122_I2S_CLOCK_BASE, SAMPLE_RATE);
+    i2s_audio_set_frame_rate(g_settings.emu_mode == EMULATION_MODE_DENDY ? 50 : 60);
+    active_i2s_mode = 2;
+}
+#endif
 
 #include "hardware/pwm.h"
 
@@ -280,6 +308,15 @@ static const int16_t *apply_volume(const int16_t *buf, int count) {
     return volume_buf;
 }
 
+#ifdef HAS_PCM5122
+static inline void ensure_i2s_route(void) {
+    if (g_settings.audio_mode == AUDIO_MODE_PCM5122) ensure_pcm5122_initialized();
+    else                                             ensure_i2s_initialized();
+}
+#else
+static inline void ensure_i2s_route(void) { ensure_i2s_initialized(); }
+#endif
+
 static void __not_in_flash("audio") audio_push_samples(const int16_t *buf, int count)
 {
     if (g_settings.audio_mode == AUDIO_MODE_DISABLED) {
@@ -298,11 +335,12 @@ static void __not_in_flash("audio") audio_push_samples(const int16_t *buf, int c
         return;
     }
 #if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO) || defined(VGA_HSTX)
-    ensure_i2s_initialized();
+    ensure_i2s_route();
     i2s_audio_push_samples(out, count);
 #else
-    if (g_settings.audio_mode == AUDIO_MODE_I2S) {
-        ensure_i2s_initialized();
+    if (g_settings.audio_mode == AUDIO_MODE_I2S ||
+        g_settings.audio_mode == AUDIO_MODE_PCM5122) {
+        ensure_i2s_route();
         i2s_audio_push_samples(out, count);
         hdmi_fill_silence(count);
     } else {
@@ -319,11 +357,12 @@ void audio_fill_silence(int count)
         return;
     }
 #if defined(VIDEO_COMPOSITE) || defined(HDMI_PIO) || defined(VGA_HSTX)
-    ensure_i2s_initialized();
+    ensure_i2s_route();
     i2s_audio_fill_silence(count);
 #else
-    if (g_settings.audio_mode == AUDIO_MODE_I2S) {
-        ensure_i2s_initialized();
+    if (g_settings.audio_mode == AUDIO_MODE_I2S ||
+        g_settings.audio_mode == AUDIO_MODE_PCM5122) {
+        ensure_i2s_route();
         i2s_audio_fill_silence(count);
     }
     hdmi_fill_silence(count);
@@ -1324,7 +1363,7 @@ static void real_main(void)
     {
         int fps = (g_settings.emu_mode == EMULATION_MODE_DENDY) ? 50 : 60;
 #ifdef HAS_I2S
-        if (i2s_initialized) i2s_audio_set_frame_rate(fps);
+        if (active_i2s_mode != 0) i2s_audio_set_frame_rate(fps);
 #endif
         if (pwm_audio_initialized) pwm_audio_set_frame_rate(fps);
     }
@@ -1431,6 +1470,33 @@ static void real_main(void)
             kbd_state |= usbhid_get_kbd_state();
 #endif
 
+            /* F11 = back to ROM selector. Recognized on both PS/2 and USB
+             * keyboards; edge-triggered so holding F11 doesn't immediately
+             * retrigger after the selector returns. */
+            static bool prev_f11 = false;
+            bool f11 = (kbd_state & KBD_STATE_F11) != 0;
+            if (f11 && !prev_f11) {
+                qnes_close();
+                g_rom_name[0] = '\0';
+                reset_requested = true;
+                prev_f11 = true;
+                break;
+            }
+            prev_f11 = f11;
+
+            /* Ctrl+Alt+Del = soft-reset the currently loaded ROM (same as
+             * the Settings → Restart Game menu). Edge-triggered on the
+             * full chord so the reset fires once per press. */
+            bool cad = ps2kbd_ctrl_alt_del_pressed() != 0;
+#if USB_HID_ENABLED
+            cad = cad || usbhid_ctrl_alt_del_pressed() != 0;
+#endif
+            static bool prev_cad = false;
+            if (cad && !prev_cad) {
+                qnes_reset(0);
+            }
+            prev_cad = cad;
+
             /* Check for menu hotkey (Start+Select, F12) */
             if (settings_check_hotkey()) {
                 settings_result_t result = settings_menu_show(test_pixels);
@@ -1439,6 +1505,13 @@ static void real_main(void)
                     g_rom_name[0] = '\0';
                     reset_requested = true;
                     break;
+                }
+                if (result == SETTINGS_RESULT_RESTART) {
+                    /* Soft reset: simulate the Reset button on the
+                     * Famicom/NES — keeps the ROM loaded but reinitializes
+                     * CPU/PPU/APU state so gameplay starts from the title
+                     * screen. */
+                    qnes_reset(0);
                 }
                 /* Push menu-driven settings into runtime state, then
                  * restore the game palette (which honors g_settings.palette). */

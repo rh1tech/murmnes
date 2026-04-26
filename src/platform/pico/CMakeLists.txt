@@ -235,7 +235,7 @@ set(EMU2413_SOURCES
     ${EMU2413DIR}/emu2413_state.cpp
 )
 
-add_executable(frank-nes
+set(FRANK_NES_SOURCES
     ${PICODIR}/main_pico.c
     ${PICODIR}/settings.c
     ${PICODIR}/palettes.c
@@ -245,6 +245,16 @@ add_executable(frank-nes
     ${DRIVERSDIR}/psram/psram_allocator.c
     ${DRIVERSDIR}/i2s/i2s_audio.c
     ${DRIVERSDIR}/pwm_audio/pwm_audio.c
+)
+
+# PCM5122 DAC support is Z0-only (Waveshare audio HAT). The driver only
+# adds a tiny I2C-control shim; the I2S path is the shared i2s_audio driver.
+if(PLATFORM STREQUAL "z0")
+    list(APPEND FRANK_NES_SOURCES ${DRIVERSDIR}/pcm5122/pcm5122.c)
+endif()
+
+add_executable(frank-nes
+    ${FRANK_NES_SOURCES}
     ${QNES_SOURCES}
     ${EMU2413_SOURCES}
 )
@@ -260,6 +270,7 @@ target_include_directories(frank-nes PRIVATE
     ${DRIVERSDIR}/psram
     ${DRIVERSDIR}/i2s
     ${DRIVERSDIR}/pwm_audio
+    ${DRIVERSDIR}/pcm5122
     ${SRCDIR}/lib/fatfs
     ${CMAKE_CURRENT_BINARY_DIR}
 )
@@ -294,7 +305,8 @@ if(PLATFORM STREQUAL "z0")
     target_compile_definitions(frank-nes PRIVATE SDCARD_SPI_BUS=spi1)
     # No PSRAM on Waveshare PiZero2350 — drop second pixel buffer (64 KiB) from QuickNES.
     target_compile_definitions(frank-nes PRIVATE QNES_SINGLE_PIXEL_BUF)
-    target_link_libraries(frank-nes hardware_spi)
+    # hardware_i2c drives the PCM5122 audio HAT control channel.
+    target_link_libraries(frank-nes hardware_spi hardware_i2c)
 endif()
 
 # Pimoroni Pico DV Demo: SD pins (GP5/18/19/22) can't map to a single HW SPI

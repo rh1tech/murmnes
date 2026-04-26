@@ -101,6 +101,13 @@ int usbhid_get_key_action(uint8_t *keycode, int *down);
 uint16_t usbhid_get_kbd_state(void);
 
 /**
+ * Non-zero when Ctrl+Alt+Del are all currently held on a USB keyboard.
+ * The chord is checked separately from usbhid_get_kbd_state() because the
+ * state bitmask is full — Del has no room in it.
+ */
+int usbhid_ctrl_alt_del_pressed(void);
+
+/**
  * Get next raw ASCII character from keyboard input queue.
  * @return ASCII char (a-z, A-Z, 0-9, space, backspace), or -1 if empty
  */
