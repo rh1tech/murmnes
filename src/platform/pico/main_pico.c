@@ -89,6 +89,16 @@ extern const uint8_t nes_rom_end[];
  * Pre-doubled eliminates shift+OR in the scanline callback hot loop,
  * reducing SRAM accesses and keeping the DMA ISR within timing budget. */
 uint32_t rgb565_palette_32[2][256];
+#if !defined(VIDEO_COMPOSITE) && !defined(HDMI_PIO) && !defined(VGA_HSTX)
+/* Darkened copy of the palette for the scanline effect — every second
+ * output line reads from this instead of rgb565_palette_32, mimicking
+ * the dark gap between CRT scanlines. Single-buffered: a torn read on
+ * a dim line is far less visible than on a bright line, and the write
+ * is a few hundred cycles inside vblank. Populated by update_palette.
+ * Only compiled on HDMI HSTX — VGA_HSTX and the PIO/composite paths
+ * render through different pipelines. */
+uint32_t rgb565_palette_dim_32[256];
+#endif
 int pal_write_idx = 0;
 static volatile int pal_read_idx = 0;
 volatile int pending_pal_idx = -1;
@@ -402,10 +412,40 @@ static inline uint8_t overscan_enum_to_px(uint8_t v) {
     }
 }
 
+/* Translate the scanline enum to a palette multiplier in /256 units. */
+static inline uint16_t scanlines_enum_to_mul(uint8_t v) {
+    switch (v) {
+        case SCANLINES_25: return 192; /* 75% brightness */
+        case SCANLINES_50: return 128; /* 50% */
+        case SCANLINES_75: return 64;  /* 25% */
+        case SCANLINES_OFF:
+        default:           return 256; /* no dim */
+    }
+}
+
+/* Forward declare — defined inside the HDMI HSTX video-mode branch below.
+ * VGA_HSTX uses DispHSTX's own rendering pipeline so the scanline dim
+ * trick does not apply there. */
+#if !defined(VIDEO_COMPOSITE) && !defined(HDMI_PIO) && !defined(VGA_HSTX)
+extern uint16_t scanline_dim_mul;
+#endif
+
+/* Scanlines-enabled flag read by the HSTX callback. OFF = skip dim
+ * lookup and use only the normal palette for both output lines. */
+volatile uint8_t __not_in_flash("scanline_state") scanline_effect_on = 0;
+
+/* PAR enum read by the HSTX callback. */
+volatile uint8_t __not_in_flash("scanline_state") scanline_par_mode = PAR_1_1;
+
 /* Push settings into the runtime state they affect. Called at startup
  * (after settings_load) and after every settings_menu_show() return. */
 static void apply_runtime_settings(void) {
     scanline_overscan_px = overscan_enum_to_px(g_settings.overscan);
+    scanline_effect_on = (g_settings.scanlines != SCANLINES_OFF);
+    scanline_par_mode = g_settings.par;
+#if !defined(VIDEO_COMPOSITE) && !defined(HDMI_PIO) && !defined(VGA_HSTX)
+    scanline_dim_mul = scanlines_enum_to_mul(g_settings.scanlines);
+#endif
     /* Palette change: update_palette() reads g_settings.palette every
      * time it runs, so the next update_palette call (from ROM load or
      * menu return) picks up the selection. No per-frame work here. */
@@ -476,7 +516,29 @@ static void update_palette(int buf_idx) {
     video_sync_palette();
 }
 #else
-/* Build RGB565 palette from QuickNES frame palette + selected color table */
+#if !defined(VGA_HSTX)
+/* Scanline dim factor in /256 units. 256 = no dim (OFF). Updated by
+ * apply_runtime_settings from g_settings.scanlines. Not static so the
+ * shared apply_runtime_settings() (above all video branches) can write
+ * to it via the `extern` declaration. */
+uint16_t scanline_dim_mul = 256;
+
+/* Dim an RGB565 value by `mul/256`. Returns the packed 32-bit doubled form. */
+static inline uint32_t dim_rgb565_doubled(uint16_t c, uint16_t mul) {
+    unsigned r = (c >> 11) & 0x1F;
+    unsigned g = (c >> 5)  & 0x3F;
+    unsigned b =  c        & 0x1F;
+    r = (r * mul) >> 8;
+    g = (g * mul) >> 8;
+    b = (b * mul) >> 8;
+    uint16_t out = (uint16_t)((r << 11) | (g << 5) | b);
+    return ((uint32_t)out) | ((uint32_t)out << 16);
+}
+#endif /* !VGA_HSTX */
+
+/* Build RGB565 palette from QuickNES frame palette + selected color table.
+ * On HDMI HSTX also populates the companion dim palette for the
+ * scanline effect so the scanline callback never does RGB math. */
 static void update_palette(int buf_idx)
 {
     int pal_size = 0;
@@ -486,10 +548,17 @@ static void update_palette(int buf_idx)
     if (!pal || !colors)
         return;
 
+#if !defined(VGA_HSTX)
+    const uint16_t dim = scanline_dim_mul;
+#endif
+
     for (int i = 0; i < pal_size && i < 256; i++) {
         qnes_rgb_t c = resolve_nes_color(pal[i], colors);
         uint16_t c16 = ((c.r & 0xF8) << 8) | ((c.g & 0xFC) << 3) | (c.b >> 3);
         rgb565_palette_32[buf_idx][i] = c16 | ((uint32_t)c16 << 16);
+#if !defined(VGA_HSTX)
+        rgb565_palette_dim_32[i] = dim_rgb565_doubled(c16, dim);
+#endif
     }
 #if defined(VGA_HSTX)
     /* Also rebuild RGB332 palette for the DispHSTX framebuffer. */
@@ -497,8 +566,28 @@ static void update_palette(int buf_idx)
 #endif
 }
 
+#if !defined(VGA_HSTX)
+/* Output doublets (= 2 pixels) reserved for the NES image at 8:7 pixel
+ * aspect. 256 * 8/7 ≈ 292.57 → round to 292 so ratio lands at ~8.045/7.
+ * LUT below maps each output doublet to the corresponding source byte. */
+#define PAR_87_DST_DOUBLETS 292
+
+/* Nearest-neighbor LUT: par87_lut[i] = source column for output doublet i. */
+static uint8_t par87_lut[PAR_87_DST_DOUBLETS];
+
+static void build_par_luts(void) {
+    for (int i = 0; i < PAR_87_DST_DOUBLETS; i++) {
+        int src = (i * NES_WIDTH + PAR_87_DST_DOUBLETS / 2) / PAR_87_DST_DOUBLETS;
+        if (src >= NES_WIDTH) src = NES_WIDTH - 1;
+        par87_lut[i] = (uint8_t)src;
+    }
+}
+#endif /* !VGA_HSTX */
+
+#if !defined(VGA_HSTX)
 /* Scanline callback: convert indexed pixels to RGB565, doubled to 640x480
- * Runs on Core 1 DMA ISR — must be in RAM, no flash access */
+ * Runs on Core 1 DMA ISR — must be in RAM, no flash access.
+ * Not compiled on VGA_HSTX: DispHSTX uses its own framebuffer path. */
 void __not_in_flash("scanline") scanline_callback(
     uint32_t v_scanline, uint32_t active_line, uint32_t *dst)
 {
@@ -508,31 +597,64 @@ void __not_in_flash("scanline") scanline_callback(
     int crop = (int)scanline_overscan_px;
 
     if ((int)nes_line < crop || (int)nes_line >= NES_HEIGHT - crop) {
-        for (int i = 32; i < 288; i++)
+        for (int i = 0; i < 320; i++)
             dst[i] = 0;
         return;
     }
 
-    const uint8_t *src = frame_pixels + nes_line * frame_pitch;
-    uint32_t *out = dst + 32;
-
-    /* Left overscan pillar */
-    for (int i = 0; i < crop; i++) out[i] = 0;
-    out += crop;
-
-    /* Middle — straight 2x pixel replication (each u32 = two packed RGB565) */
-    for (int x = crop; x < NES_WIDTH - crop; x += 4) {
-        uint32_t p = *(const uint32_t *)(src + x);
-        out[0] = rgb565_palette_32[pal_read_idx][p & 0xFF];
-        out[1] = rgb565_palette_32[pal_read_idx][(p >> 8) & 0xFF];
-        out[2] = rgb565_palette_32[pal_read_idx][(p >> 16) & 0xFF];
-        out[3] = rgb565_palette_32[pal_read_idx][(p >> 24)];
-        out += 4;
+    /* On every other output line, read from the dim palette so the
+     * NES line shows as bright-dim-bright-dim. Gated by scanline_effect_on. */
+    const uint32_t *pal;
+    if (scanline_effect_on && (active_line & 1u)) {
+        pal = rgb565_palette_dim_32;
+    } else {
+        pal = rgb565_palette_32[pal_read_idx];
     }
 
-    /* Right overscan pillar */
-    for (int i = 0; i < crop; i++) out[i] = 0;
+    const uint8_t *src = frame_pixels + nes_line * frame_pitch;
+
+    if (scanline_par_mode == PAR_8_7) {
+        /* 8:7 stretch: fill PAR_87_DST_DOUBLETS centered doublets,
+         * pillarbox the rest. Overscan cols are applied against the
+         * NES source, so the visible span is (NES_WIDTH - 2*crop).
+         * Clip the destination range proportionally so the stretch
+         * rate stays constant regardless of overscan. */
+        int total_dst = PAR_87_DST_DOUBLETS;
+        int dst_x0 = (320 - total_dst) / 2;
+        int dst_x1 = dst_x0 + total_dst;
+
+        /* Clear side pillars */
+        for (int i = 0; i < dst_x0; i++) dst[i] = 0;
+        for (int i = dst_x1; i < 320; i++) dst[i] = 0;
+
+        for (int i = 0; i < total_dst; i++) {
+            int sx = par87_lut[i];
+            if (sx < crop || sx >= NES_WIDTH - crop) {
+                dst[dst_x0 + i] = 0;
+            } else {
+                dst[dst_x0 + i] = pal[src[sx]];
+            }
+        }
+    } else {
+        /* 1:1 — straight 2x pixel replication, centered in the 320-wide output. */
+        for (int i = 0; i < 32; i++) dst[i] = 0;
+        for (int i = 288; i < 320; i++) dst[i] = 0;
+
+        uint32_t *out = dst + 32;
+        for (int i = 0; i < crop; i++) out[i] = 0;
+        out += crop;
+        for (int x = crop; x < NES_WIDTH - crop; x += 4) {
+            uint32_t p = *(const uint32_t *)(src + x);
+            out[0] = pal[p & 0xFF];
+            out[1] = pal[(p >> 8) & 0xFF];
+            out[2] = pal[(p >> 16) & 0xFF];
+            out[3] = pal[(p >> 24)];
+            out += 4;
+        }
+        for (int i = 0; i < crop; i++) out[i] = 0;
+    }
 }
+#endif /* !VGA_HSTX */
 #endif
 
 /* Pixel buffer — used by settings menu for rendering */
@@ -888,6 +1010,9 @@ static void real_main(void)
 
     settings_load();
     apply_runtime_settings();
+#if !defined(VIDEO_COMPOSITE) && !defined(HDMI_PIO) && !defined(VGA_HSTX)
+    build_par_luts();
+#endif
 
     /* Phase 1: scan SD directory and load CRC cache (fast, no HDMI needed) */
     int num_roms = 0;
@@ -958,7 +1083,9 @@ static void real_main(void)
 #endif
 
     pico_hdmi_set_audio_sample_rate(SAMPLE_RATE);
+#if !defined(VGA_HSTX)
     video_output_set_scanline_callback(scanline_callback);
+#endif
 #if defined(VGA_HSTX)
     /* DispHSTX already kicked Core 1 from video_output_init() running on
      * Core 0. Launching Core 1 again here would race/fail silently. */
