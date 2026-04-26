@@ -40,6 +40,30 @@ void qnes_set_sprite_limit(int enabled);
 #define QNES_EQ_COUNT   6
 void qnes_set_audio_eq(int preset);
 
+/* Disable the background layer (debug/practice aid). Sprites and CPU
+ * timing are unaffected. */
+void qnes_set_bg_disabled(int disabled);
+
+/* Per-2A03-oscillator mute mask. Bits:
+ *   0 = pulse 1
+ *   1 = pulse 2
+ *   2 = triangle
+ *   3 = noise
+ *   4 = DMC
+ * Pass any combination. 0 = un-mute all. */
+#define QNES_CHAN_PULSE1   (1u << 0)
+#define QNES_CHAN_PULSE2   (1u << 1)
+#define QNES_CHAN_TRIANGLE (1u << 2)
+#define QNES_CHAN_NOISE    (1u << 3)
+#define QNES_CHAN_DMC      (1u << 4)
+void qnes_set_channel_mute_mask(unsigned mask);
+
+/* Apply a 6- or 8-character Game Genie code to the currently loaded ROM.
+ * Code is patched into the cart PRG in place, so it survives qnes_reset
+ * but is lost on the next qnes_load_rom call. Returns 0 on success and
+ * non-zero if the code is malformed or doesn't match any bank. */
+int qnes_apply_game_genie(const char *code);
+
 /* Initialize emulator. Call once at startup.
  * Returns 0 on success, non-zero on error. */
 int qnes_init(long sample_rate);

@@ -100,6 +100,8 @@ typedef struct {
     uint8_t turbo_a;        // Turbo A rate (TURBO_*)
     uint8_t turbo_b;        // Turbo B rate (TURBO_*)
     uint8_t swap_ab;        // 1 = swap A and B buttons
+    uint8_t bg_disabled;    // 1 = skip background layer rendering
+    uint8_t chan_mute_mask; // 5-bit 2A03 channel mute bitmask (QNES_CHAN_*)
     char browser_path[280]; // Last file browser directory
     char browser_file[256]; // Last launched file name (in browser_path)
 } settings_t;

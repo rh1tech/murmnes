@@ -437,6 +437,51 @@ volatile uint8_t __not_in_flash("scanline_state") scanline_effect_on = 0;
 /* PAR enum read by the HSTX callback. */
 volatile uint8_t __not_in_flash("scanline_state") scanline_par_mode = PAR_1_1;
 
+/* Apply any Game Genie codes found in /nes/.cheats/{rom_name}.txt to
+ * the currently loaded ROM. Called once after each successful ROM load.
+ * One code per line; blank lines and lines starting with '#' or ';' are
+ * ignored. Invalid codes log a message but do not abort. */
+static void apply_cheat_file(void) {
+    if (g_rom_name[0] == '\0') return;
+
+    FATFS fs;
+    if (f_mount(&fs, "", 1) != FR_OK) return;
+
+    char path[128];
+    snprintf(path, sizeof(path), "/nes/.cheats/%s.txt", g_rom_name);
+
+    FIL f;
+    if (f_open(&f, path, FA_READ) != FR_OK) {
+        f_unmount("");
+        return;
+    }
+
+    char line[32];
+    int applied = 0;
+    int failed = 0;
+    while (f_gets(line, sizeof(line), &f)) {
+        /* Strip trailing newline/whitespace */
+        char *p = line;
+        while (*p == ' ' || *p == '\t') p++;
+        if (*p == '\0' || *p == '\r' || *p == '\n' || *p == '#' || *p == ';')
+            continue;
+        char *q = p;
+        while (*q && *q != '\r' && *q != '\n' && *q != ' ' && *q != '\t') q++;
+        *q = '\0';
+        if (qnes_apply_game_genie(p) == 0) {
+            applied++;
+        } else {
+            failed++;
+            printf("cheat: rejected '%s'\n", p);
+        }
+    }
+
+    f_close(&f);
+    f_unmount("");
+    if (applied || failed)
+        printf("cheats: applied=%d rejected=%d from %s\n", applied, failed, path);
+}
+
 /* Push settings into the runtime state they affect. Called at startup
  * (after settings_load) and after every settings_menu_show() return. */
 static void apply_runtime_settings(void) {
@@ -1163,6 +1208,10 @@ static void real_main(void)
     /* Apply audio equalizer preset */
     qnes_set_audio_eq(g_settings.audio_eq);
 
+    /* Apply per-game debug/practice toggles */
+    qnes_set_bg_disabled(g_settings.bg_disabled);
+    qnes_set_channel_mute_mask(g_settings.chan_mute_mask);
+
     /* The selector is also used as a file browser when there are no ROMs
      * in /nes — it will skip the carousel and show the browser directly. */
     bool selector_available = psram_available &&
@@ -1177,6 +1226,7 @@ static void real_main(void)
             if (qnes_load_rom_inplace(sd_rom_buf, rom_size) == 0) {
                 printf("Emulator initialized OK\n");
                 rom_loaded = true;
+                apply_cheat_file();
             }
         }
     }
@@ -1192,6 +1242,7 @@ static void real_main(void)
             if (qnes_load_rom_inplace(sd_rom, sd_rom_size) == 0) {
                 printf("SD ROM loaded (fallback)\n");
                 rom_loaded = true;
+                apply_cheat_file();
             }
             if (!rom_loaded && !psram_available && sd_rom_buf)
                 free(sd_rom_buf);
@@ -1206,6 +1257,7 @@ static void real_main(void)
             rom_loaded = true;
             if (g_rom_name[0] == '\0')
                 snprintf(g_rom_name, sizeof(g_rom_name), "flash_rom");
+            apply_cheat_file();
         }
     }
 #endif

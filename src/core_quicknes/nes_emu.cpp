@@ -325,6 +325,11 @@ void Nes_Emu::set_equalizer( equalizer_t const& eq )
 	}
 }
 
+// Per-oscillator mute mask. Bit i set → osc i is silenced regardless of
+// the enable_sound state. Only covers the 5 2A03 oscillators; expansion
+// audio (mapper channels) is not gated here.
+static uint8_t g_channel_mute_mask = 0;
+
 void Nes_Emu::enable_sound( bool enabled )
 {
 	if ( enabled )
@@ -334,7 +339,12 @@ void Nes_Emu::enable_sound( bool enabled )
 			Blip_Buffer* buf = sound_buf->channel( i ).center;
 			int mapper_index = i - Nes_Apu::osc_count;
 			if ( mapper_index < 0 )
-				emu.impl->apu.osc_output( i, buf );
+			{
+				if ( g_channel_mute_mask & (1u << i) )
+					emu.impl->apu.osc_output( i, NULL );
+				else
+					emu.impl->apu.osc_output( i, buf );
+			}
 			else
 				emu.mapper->set_channel_buf( mapper_index, buf );
 		}
@@ -345,6 +355,19 @@ void Nes_Emu::enable_sound( bool enabled )
 		for ( int i = channel_count() - Nes_Apu::osc_count; i-- > 0; )
 			emu.mapper->set_channel_buf( i, NULL );
 	}
+}
+
+void Nes_Emu::set_channel_muted( int index, bool muted )
+{
+	if ( index < 0 || index >= Nes_Apu::osc_count )
+		return;
+	if ( muted )
+		g_channel_mute_mask |= (1u << index);
+	else
+		g_channel_mute_mask &= ~(1u << index);
+	// Re-apply routing so the change takes effect immediately.
+	if ( sound_enabled )
+		enable_sound( true );
 }
 
 void Nes_Emu::fade_samples( blip_sample_t* p, int size, int step )

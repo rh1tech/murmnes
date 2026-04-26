@@ -8,3 +8,4 @@ deps/
 roms/
 release/
 screenlog.*
+.cache/

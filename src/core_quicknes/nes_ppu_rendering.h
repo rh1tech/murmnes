@@ -17,9 +17,13 @@ class Nes_Ppu_Rendering : public Nes_Ppu_Impl {
 	typedef Nes_Ppu_Impl base;
 public:
 	Nes_Ppu_Rendering();
-	
+
 	int sprite_limit;
-	
+
+	// When true, PPU does not render the background layer. Sprite behavior
+	// (including sprite 0 hit) is unaffected.
+	bool bg_disabled;
+
 	uint8_t* host_pixels;
 	long host_row_bytes;
 	
@@ -55,6 +59,7 @@ private:
 inline Nes_Ppu_Rendering::Nes_Ppu_Rendering()
 {
 	sprite_limit = 8;
+	bg_disabled = false;
 	host_pixels = NULL;
 }
 

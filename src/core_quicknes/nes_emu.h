@@ -190,6 +190,13 @@ public:
 	};
 	void set_sprite_mode( sprite_mode_t n ) { emu.ppu.sprite_limit = n; }
 
+	// Disable the background layer (debug / speedrun practice aid).
+	void set_bg_disabled( bool d ) { emu.ppu.bg_disabled = d; }
+
+	// Per-APU-oscillator mute. index is 0..4 (pulse1, pulse2, triangle, noise, DMC).
+	// muted=true routes the oscillator to no buffer; false restores default routing.
+	void set_channel_muted( int index, bool muted );
+
 	// Set range of host palette entries to use in graphics buffer; default uses
 	// all of them. Begin will be rounded up to next multiple of palette_alignment.
 	// Use frame().palette_begin to find the adjusted beginning entry used.

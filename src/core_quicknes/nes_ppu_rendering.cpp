@@ -386,8 +386,12 @@ void Nes_Ppu_Rendering::draw_scanlines( int start, int count,
 	int const obj_mask = 2;
 	int const bg_mask = 1;
 	int draw_mode = (w2001 >> 3) & 3;
+	// User-level background disable: behaves as if $2001 bit 3 were clear.
+	// Sprite rendering (bit 4) and emulation timing are unaffected.
+	if ( bg_disabled )
+		draw_mode &= ~bg_mask;
 	int clip_mode = (~w2001 >> 1) & draw_mode;
-	
+
 	if ( !(draw_mode & bg_mask) )
 	{
 		// no background

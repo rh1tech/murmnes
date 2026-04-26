@@ -8,6 +8,7 @@
 #include "quicknes.h"
 #include "nes_emu.h"
 #include "nes_state.h"
+#include "nes_util.h"
 #include "data_reader.h"
 #include "abstract_file.h"
 #include "ff.h"
@@ -90,6 +91,39 @@ void qnes_set_audio_eq(int preset)
     if (emu) {
         emu->set_equalizer(*eq_preset_ptr(preset));
     }
+}
+
+void qnes_set_bg_disabled(int disabled)
+{
+    if (emu)
+        emu->set_bg_disabled(disabled != 0);
+}
+
+static unsigned current_channel_mute_mask = 0;
+
+void qnes_set_channel_mute_mask(unsigned mask)
+{
+    current_channel_mute_mask = mask;
+    if (!emu) return;
+    /* Drive all 5 2A03 channels from the mask bits. Expansion audio stays
+     * untouched; separate control landing in Batch 4. */
+    for (int i = 0; i < 5; i++) {
+        emu->set_channel_muted(i, (mask & (1u << i)) != 0);
+    }
+}
+
+int qnes_apply_game_genie(const char *code)
+{
+    if (!emu || !code) return -1;
+    const Nes_Cart *cart = emu->cart();
+    if (!cart) return -1;
+    game_genie_patch_t p;
+    if (p.decode(code) != 0) return -2;
+    /* apply() needs a mutable cart: it patches PRG bytes in place. The
+     * cart data is owned by emu, so casting away const here is safe. */
+    Nes_Cart *mut_cart = const_cast<Nes_Cart *>(cart);
+    int n = p.apply(*mut_cart);
+    return (n > 0) ? 0 : -3;
 }
 
 void *qnes_get_tile_cache_buf(long *out_size)

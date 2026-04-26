@@ -97,11 +97,17 @@ typedef enum {
 typedef enum {
     EMU_MENU_MODE,          /* region: NES / DENDY */
     EMU_MENU_SPRITE_LIMIT,  /* PPU */
+    EMU_MENU_BG_DISABLED,
     EMU_MENU_OVERSCAN,      /* video */
     EMU_MENU_SCANLINES,
     EMU_MENU_PAR,
     EMU_MENU_PALETTE,
     EMU_MENU_AUDIO_EQ,      /* audio */
+    EMU_MENU_MUTE_PULSE1,   /* per-channel 2A03 mutes */
+    EMU_MENU_MUTE_PULSE2,
+    EMU_MENU_MUTE_TRIANGLE,
+    EMU_MENU_MUTE_NOISE,
+    EMU_MENU_MUTE_DMC,
     EMU_MENU_TURBO_A,       /* input */
     EMU_MENU_TURBO_B,
     EMU_MENU_SWAP_AB,
@@ -181,6 +187,8 @@ settings_t g_settings = {
     .turbo_a = TURBO_OFF,
     .turbo_b = TURBO_OFF,
     .swap_ab = 0,
+    .bg_disabled = 0,
+    .chan_mute_mask = 0,
 };
 
 /* Local copy for editing */
@@ -333,18 +341,24 @@ static const char *get_menu_label(menu_item_t item) {
 
 static const char *get_emu_menu_label(emu_menu_item_t item) {
     switch (item) {
-        case EMU_MENU_MODE:         return "MODE";
-        case EMU_MENU_SPRITE_LIMIT: return "SPRITE LIMIT";
-        case EMU_MENU_OVERSCAN:     return "OVERSCAN";
-        case EMU_MENU_SCANLINES:    return "SCANLINES";
-        case EMU_MENU_PAR:          return "ASPECT";
-        case EMU_MENU_PALETTE:      return "PALETTE";
-        case EMU_MENU_AUDIO_EQ:     return "AUDIO EQ";
-        case EMU_MENU_TURBO_A:      return "TURBO A";
-        case EMU_MENU_TURBO_B:      return "TURBO B";
-        case EMU_MENU_SWAP_AB:      return "SWAP A/B";
-        case EMU_MENU_BACK:         return "BACK";
-        default:                    return "";
+        case EMU_MENU_MODE:          return "MODE";
+        case EMU_MENU_SPRITE_LIMIT:  return "SPRITE LIMIT";
+        case EMU_MENU_BG_DISABLED:   return "BACKGROUND";
+        case EMU_MENU_OVERSCAN:      return "OVERSCAN";
+        case EMU_MENU_SCANLINES:     return "SCANLINES";
+        case EMU_MENU_PAR:           return "ASPECT";
+        case EMU_MENU_PALETTE:       return "PALETTE";
+        case EMU_MENU_AUDIO_EQ:      return "AUDIO EQ";
+        case EMU_MENU_MUTE_PULSE1:   return "MUTE PULSE 1";
+        case EMU_MENU_MUTE_PULSE2:   return "MUTE PULSE 2";
+        case EMU_MENU_MUTE_TRIANGLE: return "MUTE TRIANGLE";
+        case EMU_MENU_MUTE_NOISE:    return "MUTE NOISE";
+        case EMU_MENU_MUTE_DMC:      return "MUTE DMC";
+        case EMU_MENU_TURBO_A:       return "TURBO A";
+        case EMU_MENU_TURBO_B:       return "TURBO B";
+        case EMU_MENU_SWAP_AB:       return "SWAP A/B";
+        case EMU_MENU_BACK:          return "BACK";
+        default:                     return "";
     }
 }
 
@@ -383,18 +397,26 @@ static const char *get_value_text(menu_item_t item) {
 
 static const char *get_emu_value_text(emu_menu_item_t item) {
     switch (item) {
-        case EMU_MENU_MODE:         return emu_mode_names[edit_settings.emu_mode];
-        case EMU_MENU_SPRITE_LIMIT: return sprite_limit_names[edit_settings.sprite_limit ? 1 : 0];
-        case EMU_MENU_OVERSCAN:     return overscan_names[edit_settings.overscan < OVERSCAN_COUNT ? edit_settings.overscan : 0];
-        case EMU_MENU_SCANLINES:    return scanlines_names[edit_settings.scanlines < SCANLINES_COUNT ? edit_settings.scanlines : 0];
-        case EMU_MENU_PAR:          return par_names[edit_settings.par < PAR_COUNT ? edit_settings.par : 0];
-        case EMU_MENU_PALETTE:      return palette_names[edit_settings.palette < PALETTE_COUNT ? edit_settings.palette : 0];
+        case EMU_MENU_MODE:          return emu_mode_names[edit_settings.emu_mode];
+        case EMU_MENU_SPRITE_LIMIT:  return sprite_limit_names[edit_settings.sprite_limit ? 1 : 0];
+        /* BACKGROUND label reads "ON" when the bg layer is drawn, "OFF" when
+         * the user has asked to hide it (bg_disabled=1). */
+        case EMU_MENU_BG_DISABLED:   return on_off_names[edit_settings.bg_disabled ? 0 : 1];
+        case EMU_MENU_OVERSCAN:      return overscan_names[edit_settings.overscan < OVERSCAN_COUNT ? edit_settings.overscan : 0];
+        case EMU_MENU_SCANLINES:     return scanlines_names[edit_settings.scanlines < SCANLINES_COUNT ? edit_settings.scanlines : 0];
+        case EMU_MENU_PAR:           return par_names[edit_settings.par < PAR_COUNT ? edit_settings.par : 0];
+        case EMU_MENU_PALETTE:       return palette_names[edit_settings.palette < PALETTE_COUNT ? edit_settings.palette : 0];
         case EMU_MENU_AUDIO_EQ:
             return audio_eq_names[edit_settings.audio_eq < AUDIO_EQ_COUNT ? edit_settings.audio_eq : 0];
-        case EMU_MENU_TURBO_A:      return turbo_names[edit_settings.turbo_a < TURBO_COUNT ? edit_settings.turbo_a : 0];
-        case EMU_MENU_TURBO_B:      return turbo_names[edit_settings.turbo_b < TURBO_COUNT ? edit_settings.turbo_b : 0];
-        case EMU_MENU_SWAP_AB:      return on_off_names[edit_settings.swap_ab ? 1 : 0];
-        default:                    return NULL;
+        case EMU_MENU_MUTE_PULSE1:   return on_off_names[(edit_settings.chan_mute_mask >> 0) & 1];
+        case EMU_MENU_MUTE_PULSE2:   return on_off_names[(edit_settings.chan_mute_mask >> 1) & 1];
+        case EMU_MENU_MUTE_TRIANGLE: return on_off_names[(edit_settings.chan_mute_mask >> 2) & 1];
+        case EMU_MENU_MUTE_NOISE:    return on_off_names[(edit_settings.chan_mute_mask >> 3) & 1];
+        case EMU_MENU_MUTE_DMC:      return on_off_names[(edit_settings.chan_mute_mask >> 4) & 1];
+        case EMU_MENU_TURBO_A:       return turbo_names[edit_settings.turbo_a < TURBO_COUNT ? edit_settings.turbo_a : 0];
+        case EMU_MENU_TURBO_B:       return turbo_names[edit_settings.turbo_b < TURBO_COUNT ? edit_settings.turbo_b : 0];
+        case EMU_MENU_SWAP_AB:       return on_off_names[edit_settings.swap_ab ? 1 : 0];
+        default:                     return NULL;
     }
 }
 
@@ -536,6 +558,22 @@ static void change_emu_value(emu_menu_item_t item, int dir) {
             edit_settings.swap_ab = edit_settings.swap_ab ? 0 : 1;
             (void)dir;
             break;
+        case EMU_MENU_BG_DISABLED:
+            edit_settings.bg_disabled = edit_settings.bg_disabled ? 0 : 1;
+            qnes_set_bg_disabled(edit_settings.bg_disabled);
+            (void)dir;
+            break;
+        case EMU_MENU_MUTE_PULSE1:
+        case EMU_MENU_MUTE_PULSE2:
+        case EMU_MENU_MUTE_TRIANGLE:
+        case EMU_MENU_MUTE_NOISE:
+        case EMU_MENU_MUTE_DMC: {
+            unsigned bit = (unsigned)(item - EMU_MENU_MUTE_PULSE1);
+            edit_settings.chan_mute_mask ^= (uint8_t)(1u << bit);
+            qnes_set_channel_mute_mask(edit_settings.chan_mute_mask);
+            (void)dir;
+            break;
+        }
         default:
             break;
     }
@@ -945,6 +983,7 @@ void settings_load(void) {
 
     f_mkdir("/nes");
     f_mkdir("/nes/.save");
+    f_mkdir("/nes/.cheats");
 
     FIL file;
     if (f_open(&file, SETTINGS_PATH, FA_READ) != FR_OK) {
@@ -1056,6 +1095,17 @@ void settings_load(void) {
         else if (parse_ini_line(line, "swap_ab", value, sizeof(value))) {
             g_settings.swap_ab = (strcmp(value, "on") == 0 || strcmp(value, "1") == 0) ? 1 : 0;
         }
+        else if (parse_ini_line(line, "bg_disabled", value, sizeof(value))) {
+            g_settings.bg_disabled = (strcmp(value, "on") == 0 || strcmp(value, "1") == 0) ? 1 : 0;
+        }
+        else if (parse_ini_line(line, "chan_mute", value, sizeof(value))) {
+            /* Stored as a hex or decimal bitmask. */
+            unsigned v = 0;
+            if (sscanf(value, "%x", &v) != 1) {
+                if (sscanf(value, "%u", &v) != 1) v = 0;
+            }
+            g_settings.chan_mute_mask = (uint8_t)(v & 0x1F);
+        }
         else if (parse_ini_line(line, "selector", value, sizeof(value))) {
             if (strcmp(value, "browser") == 0 || strcmp(value, "1") == 0)
                 g_settings.selector_mode = SELECTOR_MODE_BROWSER;
@@ -1108,6 +1158,8 @@ void settings_save(void) {
         "turbo_a = %s\n"
         "turbo_b = %s\n"
         "swap_ab = %s\n"
+        "bg_disabled = %s\n"
+        "chan_mute = 0x%02X\n"
         "selector = %s\n"
         "browser_path = %s\n"
         "browser_file = %s\n",
@@ -1125,6 +1177,8 @@ void settings_save(void) {
         turbo_ini_names[g_settings.turbo_a < TURBO_COUNT ? g_settings.turbo_a : 0],
         turbo_ini_names[g_settings.turbo_b < TURBO_COUNT ? g_settings.turbo_b : 0],
         g_settings.swap_ab ? "on" : "off",
+        g_settings.bg_disabled ? "on" : "off",
+        (unsigned)(g_settings.chan_mute_mask & 0x1F),
         selector_mode_ini_names[g_settings.selector_mode & 1],
         g_settings.browser_path,
         g_settings.browser_file);
