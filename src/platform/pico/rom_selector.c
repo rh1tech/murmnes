@@ -2308,7 +2308,7 @@ void welcome_screen_show(void) {
         fb_text_center(132, version_str, PAL_GRAY);
 
         fb_text_center(152, "BY MIKHAIL MATVEEV", PAL_GRAY);
-        fb_text_center(164, "<XTREME@RH1.TECH>", PAL_GRAY);
+        fb_text_center(164, "GITHUB.COM/RH1TECH/FRANK-NES", PAL_GRAY);
 
         fb_text_center(184, "RH1.TECH", PAL_GRAY);
 
