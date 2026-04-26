@@ -101,6 +101,8 @@ typedef enum {
     EMU_MENU_OVERSCAN,      /* video */
     EMU_MENU_PALETTE,
     EMU_MENU_AUDIO_EQ,      /* audio */
+    EMU_MENU_LOWPASS,
+    EMU_MENU_EXPANSION_MUTED,
     EMU_MENU_MUTE_PULSE1,   /* per-channel 2A03 mutes */
     EMU_MENU_MUTE_PULSE2,
     EMU_MENU_MUTE_TRIANGLE,
@@ -198,6 +200,8 @@ settings_t g_settings = {
     .swap_ab = 0,
     .bg_disabled = 0,
     .chan_mute_mask = 0,
+    .expansion_muted = 0,
+    .lowpass = 0,
     .remap = { REMAP_A, REMAP_B, REMAP_SELECT, REMAP_START }, /* identity */
 };
 
@@ -357,6 +361,8 @@ static const char *get_emu_menu_label(emu_menu_item_t item) {
         case EMU_MENU_OVERSCAN:      return "OVERSCAN";
         case EMU_MENU_PALETTE:       return "PALETTE";
         case EMU_MENU_AUDIO_EQ:      return "AUDIO EQ";
+        case EMU_MENU_LOWPASS:       return "LOW-PASS";
+        case EMU_MENU_EXPANSION_MUTED: return "EXPANSION AUDIO";
         case EMU_MENU_MUTE_PULSE1:   return "MUTE PULSE 1";
         case EMU_MENU_MUTE_PULSE2:   return "MUTE PULSE 2";
         case EMU_MENU_MUTE_TRIANGLE: return "MUTE TRIANGLE";
@@ -394,6 +400,7 @@ static int next_selectable(int sel, int dir) {
 }
 
 static char volume_text_buf[8];
+static char lowpass_text_buf[8];
 
 static const char *get_value_text(menu_item_t item) {
     switch (item) {
@@ -418,6 +425,12 @@ static const char *get_emu_value_text(emu_menu_item_t item) {
         case EMU_MENU_PALETTE:       return palette_names[edit_settings.palette < PALETTE_COUNT ? edit_settings.palette : 0];
         case EMU_MENU_AUDIO_EQ:
             return audio_eq_names[edit_settings.audio_eq < AUDIO_EQ_COUNT ? edit_settings.audio_eq : 0];
+        case EMU_MENU_LOWPASS:
+            if (edit_settings.lowpass == 0) return "OFF";
+            snprintf(lowpass_text_buf, sizeof(lowpass_text_buf), "%d", edit_settings.lowpass);
+            return lowpass_text_buf;
+        /* EXPANSION AUDIO reads "ON" when expansion is routed, "OFF" when muted. */
+        case EMU_MENU_EXPANSION_MUTED: return on_off_names[edit_settings.expansion_muted ? 0 : 1];
         case EMU_MENU_MUTE_PULSE1:   return on_off_names[(edit_settings.chan_mute_mask >> 0) & 1];
         case EMU_MENU_MUTE_PULSE2:   return on_off_names[(edit_settings.chan_mute_mask >> 1) & 1];
         case EMU_MENU_MUTE_TRIANGLE: return on_off_names[(edit_settings.chan_mute_mask >> 2) & 1];
@@ -559,6 +572,19 @@ static void change_emu_value(emu_menu_item_t item, int dir) {
             edit_settings.audio_eq = (uint8_t)((edit_settings.audio_eq + AUDIO_EQ_COUNT + dir) % AUDIO_EQ_COUNT);
             /* Apply live — tonal change, no ROM reload needed. */
             qnes_set_audio_eq(edit_settings.audio_eq);
+            break;
+        case EMU_MENU_LOWPASS: {
+            int v = (int)edit_settings.lowpass + dir;
+            if (v < LOWPASS_MIN) v = LOWPASS_MIN;
+            if (v > LOWPASS_MAX) v = LOWPASS_MAX;
+            edit_settings.lowpass = (uint8_t)v;
+            qnes_set_lowpass(edit_settings.lowpass);
+            break;
+        }
+        case EMU_MENU_EXPANSION_MUTED:
+            edit_settings.expansion_muted = edit_settings.expansion_muted ? 0 : 1;
+            qnes_set_expansion_muted(edit_settings.expansion_muted);
+            (void)dir;
             break;
         case EMU_MENU_TURBO_A:
             edit_settings.turbo_a = (uint8_t)((edit_settings.turbo_a + TURBO_COUNT + dir) % TURBO_COUNT);
@@ -1129,6 +1155,15 @@ void settings_load(void) {
             }
             g_settings.chan_mute_mask = (uint8_t)(v & 0x1F);
         }
+        else if (parse_ini_line(line, "expansion_muted", value, sizeof(value))) {
+            g_settings.expansion_muted = (strcmp(value, "on") == 0 || strcmp(value, "1") == 0) ? 1 : 0;
+        }
+        else if (parse_ini_line(line, "lowpass", value, sizeof(value))) {
+            int v = atoi(value);
+            if (v < LOWPASS_MIN) v = LOWPASS_MIN;
+            if (v > LOWPASS_MAX) v = LOWPASS_MAX;
+            g_settings.lowpass = (uint8_t)v;
+        }
         else if (parse_ini_line(line, "remap", value, sizeof(value))) {
             /* Comma-separated list of 4 target names: A/B/Select/Start. */
             const char *p = value;
@@ -1227,6 +1262,8 @@ void settings_save(void) {
         "swap_ab = %s\n"
         "bg_disabled = %s\n"
         "chan_mute = 0x%02X\n"
+        "expansion_muted = %s\n"
+        "lowpass = %d\n"
         "remap = %s,%s,%s,%s\n"
         "selector = %s\n"
         "browser_path = %s\n"
@@ -1245,6 +1282,8 @@ void settings_save(void) {
         g_settings.swap_ab ? "on" : "off",
         g_settings.bg_disabled ? "on" : "off",
         (unsigned)(g_settings.chan_mute_mask & 0x1F),
+        g_settings.expansion_muted ? "on" : "off",
+        (int)(g_settings.lowpass > LOWPASS_MAX ? LOWPASS_MAX : g_settings.lowpass),
         remap_a, remap_b, remap_s, remap_t,
         selector_mode_ini_names[g_settings.selector_mode & 1],
         g_settings.browser_path,

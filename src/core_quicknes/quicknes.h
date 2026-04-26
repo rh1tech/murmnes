@@ -64,6 +64,16 @@ void qnes_set_channel_mute_mask(unsigned mask);
  * non-zero if the code is malformed or doesn't match any bank. */
 int qnes_apply_game_genie(const char *code);
 
+/* Mute/unmute the mapper expansion-audio channels (VRC6, VRC7, MMC5,
+ * Namco 163, FME-7, ...). 2A03 channels are unaffected. */
+void qnes_set_expansion_muted(int muted);
+
+/* Additional low-pass roll-off on top of the current audio EQ preset.
+ * 0 = no change, increasing values lower the treble cutoff. Max is
+ * QNES_LOWPASS_MAX; mapping is linear in dB, ending at roughly -20 dB. */
+#define QNES_LOWPASS_MAX 10
+void qnes_set_lowpass(int amount);
+
 /* Initialize emulator. Call once at startup.
  * Returns 0 on success, non-zero on error. */
 int qnes_init(long sample_rate);

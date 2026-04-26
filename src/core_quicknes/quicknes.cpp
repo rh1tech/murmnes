@@ -84,13 +84,36 @@ void qnes_set_sprite_limit(int enabled)
     }
 }
 
+/* Linear map: amount in [0..QNES_LOWPASS_MAX] → extra treble roll-off in
+ * dB (negative values), ending at about -20 dB. */
+static int current_lowpass_amount = 0;
+static double lowpass_extra_db(int amount)
+{
+    if (amount <= 0) return 0.0;
+    if (amount > QNES_LOWPASS_MAX) amount = QNES_LOWPASS_MAX;
+    return -2.0 * amount;
+}
+
 void qnes_set_audio_eq(int preset)
 {
     if (preset < 0 || preset >= QNES_EQ_COUNT) preset = QNES_EQ_NES;
     current_eq_preset = preset;
     if (emu) {
         emu->set_equalizer(*eq_preset_ptr(preset));
+        /* set_equalizer resets treble to the preset's value; reapply the
+         * user's extra roll-off on top. */
+        if (current_lowpass_amount > 0)
+            emu->apply_lowpass(lowpass_extra_db(current_lowpass_amount));
     }
+}
+
+void qnes_set_lowpass(int amount)
+{
+    if (amount < 0) amount = 0;
+    if (amount > QNES_LOWPASS_MAX) amount = QNES_LOWPASS_MAX;
+    current_lowpass_amount = amount;
+    if (emu)
+        emu->apply_lowpass(lowpass_extra_db(amount));
 }
 
 void qnes_set_bg_disabled(int disabled)
@@ -105,11 +128,18 @@ void qnes_set_channel_mute_mask(unsigned mask)
 {
     current_channel_mute_mask = mask;
     if (!emu) return;
-    /* Drive all 5 2A03 channels from the mask bits. Expansion audio stays
-     * untouched; separate control landing in Batch 4. */
     for (int i = 0; i < 5; i++) {
         emu->set_channel_muted(i, (mask & (1u << i)) != 0);
     }
+}
+
+static bool current_expansion_muted = false;
+
+void qnes_set_expansion_muted(int muted)
+{
+    current_expansion_muted = muted != 0;
+    if (emu)
+        emu->set_expansion_muted(current_expansion_muted);
 }
 
 int qnes_apply_game_genie(const char *code)
@@ -158,6 +188,10 @@ int qnes_init(long sample_rate)
         ? Nes_Emu::sprites_visible
         : Nes_Emu::sprites_enhanced);
     emu->set_equalizer(*eq_preset_ptr(current_eq_preset));
+    if (current_lowpass_amount > 0)
+        emu->apply_lowpass(lowpass_extra_db(current_lowpass_amount));
+    if (current_expansion_muted)
+        emu->set_expansion_muted(true);
     initialized = true;
     return 0;
 }

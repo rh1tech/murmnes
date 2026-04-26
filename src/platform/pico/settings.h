@@ -51,6 +51,10 @@
 #define AUDIO_EQ_TINNY   5
 #define AUDIO_EQ_COUNT   6
 
+// Low-pass amount — 0..10, applied on top of the EQ preset.
+#define LOWPASS_MIN 0
+#define LOWPASS_MAX 10
+
 // Overscan crop (rows hidden top+bottom AND columns hidden left+right)
 #define OVERSCAN_OFF  0  // show full 256x240 (except the always-clipped black frame)
 #define OVERSCAN_8    1  // hide 8 rows / 8 cols (classic NTSC TV safe area)
@@ -105,6 +109,8 @@ typedef struct {
     uint8_t swap_ab;        // 1 = swap A and B buttons (shortcut; also set via remap)
     uint8_t bg_disabled;    // 1 = skip background layer rendering
     uint8_t chan_mute_mask; // 5-bit 2A03 channel mute bitmask (QNES_CHAN_*)
+    uint8_t expansion_muted;// 1 = mute mapper-owned expansion audio
+    uint8_t lowpass;        // Extra low-pass amount 0..LOWPASS_MAX
     /* Per-source button remap. Index = source bit (0=A, 1=B, 2=Sel, 3=Start).
      * Value = REMAP_* target bit (0..7) or REMAP_NONE. Defaults to identity. */
     uint8_t remap[REMAP_SRC_COUNT];

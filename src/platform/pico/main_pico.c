@@ -483,6 +483,19 @@ static int apply_override_line(const char *line)
         qnes_set_channel_mute_mask(g_settings.chan_mute_mask);
         return 1;
     }
+    if (KEY_IS("expansion_muted")) {
+        g_settings.expansion_muted = (strcmp(val, "on") == 0 || strcmp(val, "1") == 0) ? 1 : 0;
+        qnes_set_expansion_muted(g_settings.expansion_muted);
+        return 1;
+    }
+    if (KEY_IS("lowpass")) {
+        int v2 = atoi(val);
+        if (v2 < LOWPASS_MIN) v2 = LOWPASS_MIN;
+        if (v2 > LOWPASS_MAX) v2 = LOWPASS_MAX;
+        g_settings.lowpass = (uint8_t)v2;
+        qnes_set_lowpass(g_settings.lowpass);
+        return 1;
+    }
     if (KEY_IS("overscan")) {
         if (strcmp(val, "off") == 0 || strcmp(val, "0") == 0) g_settings.overscan = OVERSCAN_OFF;
         else if (strcmp(val, "16") == 0)                      g_settings.overscan = OVERSCAN_16;
@@ -1305,8 +1318,10 @@ static void real_main(void)
     /* Apply per-scanline sprite limit (ON = 8/scanline hardware behavior, OFF = render all) */
     qnes_set_sprite_limit(g_settings.sprite_limit ? 1 : 0);
 
-    /* Apply audio equalizer preset */
+    /* Apply audio equalizer preset + extra low-pass + expansion-audio mute */
     qnes_set_audio_eq(g_settings.audio_eq);
+    qnes_set_lowpass(g_settings.lowpass);
+    qnes_set_expansion_muted(g_settings.expansion_muted);
 
     /* Apply per-game debug/practice toggles */
     qnes_set_bg_disabled(g_settings.bg_disabled);

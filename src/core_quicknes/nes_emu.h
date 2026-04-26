@@ -197,6 +197,16 @@ public:
 	// muted=true routes the oscillator to no buffer; false restores default routing.
 	void set_channel_muted( int index, bool muted );
 
+	// Mute the expansion-audio channels (mapper-owned synths: VRC6, VRC7,
+	// MMC5, Namco 163, Sunsoft FME-7, etc.). 2A03 audio is unaffected.
+	void set_expansion_muted( bool muted );
+
+	// Apply an extra low-pass (treble roll-off) on top of the current
+	// equalizer preset. dB is a negative value — same sign convention as
+	// equalizer_t.treble (more negative = softer highs). 0.0 is a no-op.
+	// Takes effect immediately.
+	void apply_lowpass( double extra_treble_db );
+
 	// Set range of host palette entries to use in graphics buffer; default uses
 	// all of them. Begin will be rounded up to next multiple of palette_alignment.
 	// Use frame().palette_begin to find the adjusted beginning entry used.

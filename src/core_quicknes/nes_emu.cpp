@@ -327,8 +327,13 @@ void Nes_Emu::set_equalizer( equalizer_t const& eq )
 
 // Per-oscillator mute mask. Bit i set → osc i is silenced regardless of
 // the enable_sound state. Only covers the 5 2A03 oscillators; expansion
-// audio (mapper channels) is not gated here.
+// audio (mapper channels) is controlled by g_expansion_muted below.
 static uint8_t g_channel_mute_mask = 0;
+
+// Expansion-audio mute. When true, the mapper-owned audio channels
+// (VRC6/VRC7/MMC5/N163/FME-7/etc.) are routed to no buffer so their
+// output stays out of the final mix. 2A03 channels are unaffected.
+static bool g_expansion_muted = false;
 
 void Nes_Emu::enable_sound( bool enabled )
 {
@@ -346,7 +351,8 @@ void Nes_Emu::enable_sound( bool enabled )
 					emu.impl->apu.osc_output( i, buf );
 			}
 			else
-				emu.mapper->set_channel_buf( mapper_index, buf );
+				emu.mapper->set_channel_buf( mapper_index,
+					g_expansion_muted ? NULL : buf );
 		}
 	}
 	else
@@ -368,6 +374,23 @@ void Nes_Emu::set_channel_muted( int index, bool muted )
 	// Re-apply routing so the change takes effect immediately.
 	if ( sound_enabled )
 		enable_sound( true );
+}
+
+void Nes_Emu::set_expansion_muted( bool muted )
+{
+	g_expansion_muted = muted;
+	if ( sound_enabled )
+		enable_sound( true );
+}
+
+void Nes_Emu::apply_lowpass( double extra_treble_db )
+{
+	if ( !cart() ) return;
+	// Compose the active preset's treble with the user's extra roll-off.
+	blip_eq_t blip_eq( equalizer_.treble + extra_treble_db, 0,
+	                   sound_buf->sample_rate() );
+	emu.impl->apu.treble_eq( blip_eq );
+	emu.mapper->set_treble( blip_eq );
 }
 
 void Nes_Emu::fade_samples( blip_sample_t* p, int size, int step )
