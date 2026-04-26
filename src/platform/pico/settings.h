@@ -84,6 +84,23 @@
 #define TURBO_30  3  // 30 Hz
 #define TURBO_COUNT 4
 
+// Button remap targets. Values match the NES joypad bit index with
+// REMAP_NONE encoded as 0xFF so a source mapped to nothing disappears
+// from the joypad word.
+#define REMAP_A      0
+#define REMAP_B      1
+#define REMAP_SELECT 2
+#define REMAP_START  3
+#define REMAP_UP     4
+#define REMAP_DOWN   5
+#define REMAP_LEFT   6
+#define REMAP_RIGHT  7
+#define REMAP_NONE   0xFF
+
+// We expose remapping for A, B, Select, Start only. U/D/L/R pass through —
+// swapping directions is almost never what users want and would bloat the UI.
+#define REMAP_SRC_COUNT 4
+
 typedef struct {
     uint8_t p1_mode;        // Player 1 input mode (INPUT_MODE_*)
     uint8_t p2_mode;        // Player 2 input mode (INPUT_MODE_*)
@@ -99,9 +116,12 @@ typedef struct {
     uint8_t palette;        // Palette selector (PALETTE_*)
     uint8_t turbo_a;        // Turbo A rate (TURBO_*)
     uint8_t turbo_b;        // Turbo B rate (TURBO_*)
-    uint8_t swap_ab;        // 1 = swap A and B buttons
+    uint8_t swap_ab;        // 1 = swap A and B buttons (shortcut; also set via remap)
     uint8_t bg_disabled;    // 1 = skip background layer rendering
     uint8_t chan_mute_mask; // 5-bit 2A03 channel mute bitmask (QNES_CHAN_*)
+    /* Per-source button remap. Index = source bit (0=A, 1=B, 2=Sel, 3=Start).
+     * Value = REMAP_* target bit (0..7) or REMAP_NONE. Defaults to identity. */
+    uint8_t remap[REMAP_SRC_COUNT];
     char browser_path[280]; // Last file browser directory
     char browser_file[256]; // Last launched file name (in browser_path)
 } settings_t;

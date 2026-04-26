@@ -111,6 +111,10 @@ typedef enum {
     EMU_MENU_TURBO_A,       /* input */
     EMU_MENU_TURBO_B,
     EMU_MENU_SWAP_AB,
+    EMU_MENU_REMAP_A,
+    EMU_MENU_REMAP_B,
+    EMU_MENU_REMAP_SELECT,
+    EMU_MENU_REMAP_START,
     EMU_MENU_BACK,
     EMU_MENU_ITEM_COUNT
 } emu_menu_item_t;
@@ -162,6 +166,23 @@ static const char *turbo_ini_names[] = {"off", "10", "15", "30"};
 /* Generic ON/OFF labels */
 static const char *on_off_names[] = {"OFF", "ON"};
 
+/* Remap target labels (index matches the REMAP_* target bit 0..7).
+ * REMAP_NONE (0xFF) is handled as a special last slot. */
+static const char *remap_target_names[] = {
+    "A", "B", "SELECT", "START", "UP", "DOWN", "LEFT", "RIGHT", "NONE"
+};
+static const char *remap_target_ini_names[] = {
+    "a", "b", "select", "start", "up", "down", "left", "right", "none"
+};
+#define REMAP_UI_COUNT 9  /* 8 targets + NONE */
+
+static int remap_value_to_ui_index(uint8_t v) {
+    return (v == REMAP_NONE) ? 8 : (v & 7);
+}
+static uint8_t remap_ui_index_to_value(int i) {
+    return (i == 8) ? REMAP_NONE : (uint8_t)(i & 7);
+}
+
 /* Global settings */
 settings_t g_settings = {
     .p1_mode = INPUT_MODE_ANY,
@@ -189,6 +210,7 @@ settings_t g_settings = {
     .swap_ab = 0,
     .bg_disabled = 0,
     .chan_mute_mask = 0,
+    .remap = { REMAP_A, REMAP_B, REMAP_SELECT, REMAP_START }, /* identity */
 };
 
 /* Local copy for editing */
@@ -357,6 +379,10 @@ static const char *get_emu_menu_label(emu_menu_item_t item) {
         case EMU_MENU_TURBO_A:       return "TURBO A";
         case EMU_MENU_TURBO_B:       return "TURBO B";
         case EMU_MENU_SWAP_AB:       return "SWAP A/B";
+        case EMU_MENU_REMAP_A:       return "REMAP A";
+        case EMU_MENU_REMAP_B:       return "REMAP B";
+        case EMU_MENU_REMAP_SELECT:  return "REMAP SEL";
+        case EMU_MENU_REMAP_START:   return "REMAP START";
         case EMU_MENU_BACK:          return "BACK";
         default:                     return "";
     }
@@ -416,6 +442,14 @@ static const char *get_emu_value_text(emu_menu_item_t item) {
         case EMU_MENU_TURBO_A:       return turbo_names[edit_settings.turbo_a < TURBO_COUNT ? edit_settings.turbo_a : 0];
         case EMU_MENU_TURBO_B:       return turbo_names[edit_settings.turbo_b < TURBO_COUNT ? edit_settings.turbo_b : 0];
         case EMU_MENU_SWAP_AB:       return on_off_names[edit_settings.swap_ab ? 1 : 0];
+        case EMU_MENU_REMAP_A:
+        case EMU_MENU_REMAP_B:
+        case EMU_MENU_REMAP_SELECT:
+        case EMU_MENU_REMAP_START: {
+            int src = item - EMU_MENU_REMAP_A;
+            int ui = remap_value_to_ui_index(edit_settings.remap[src]);
+            return remap_target_names[ui];
+        }
         default:                     return NULL;
     }
 }
@@ -556,8 +590,33 @@ static void change_emu_value(emu_menu_item_t item, int dir) {
             break;
         case EMU_MENU_SWAP_AB:
             edit_settings.swap_ab = edit_settings.swap_ab ? 0 : 1;
+            /* Keep the remap table in sync so A and B show the right
+             * REMAP target when the user visits those rows afterwards. */
+            if (edit_settings.swap_ab) {
+                edit_settings.remap[0] = REMAP_B;
+                edit_settings.remap[1] = REMAP_A;
+            } else {
+                edit_settings.remap[0] = REMAP_A;
+                edit_settings.remap[1] = REMAP_B;
+            }
             (void)dir;
             break;
+        case EMU_MENU_REMAP_A:
+        case EMU_MENU_REMAP_B:
+        case EMU_MENU_REMAP_SELECT:
+        case EMU_MENU_REMAP_START: {
+            int src = item - EMU_MENU_REMAP_A;
+            int ui = remap_value_to_ui_index(edit_settings.remap[src]);
+            ui = (ui + REMAP_UI_COUNT + dir) % REMAP_UI_COUNT;
+            edit_settings.remap[src] = remap_ui_index_to_value(ui);
+            /* Keep SWAP A/B flag coherent with A/B-row edits. */
+            if (src <= 1) {
+                edit_settings.swap_ab =
+                    (edit_settings.remap[0] == REMAP_B &&
+                     edit_settings.remap[1] == REMAP_A) ? 1 : 0;
+            }
+            break;
+        }
         case EMU_MENU_BG_DISABLED:
             edit_settings.bg_disabled = edit_settings.bg_disabled ? 0 : 1;
             qnes_set_bg_disabled(edit_settings.bg_disabled);
@@ -1108,6 +1167,36 @@ void settings_load(void) {
             }
             g_settings.chan_mute_mask = (uint8_t)(v & 0x1F);
         }
+        else if (parse_ini_line(line, "remap", value, sizeof(value))) {
+            /* Comma-separated list of 4 target names: A/B/Select/Start. */
+            const char *p = value;
+            for (int src = 0; src < REMAP_SRC_COUNT; src++) {
+                while (*p == ' ' || *p == '\t') p++;
+                char tok[16];
+                size_t ti = 0;
+                while (*p && *p != ',' && *p != '\r' && *p != '\n' &&
+                       ti < sizeof(tok) - 1) {
+                    char c = *p++;
+                    if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+                    tok[ti++] = c;
+                }
+                tok[ti] = '\0';
+                while (ti > 0 && (tok[ti-1] == ' ' || tok[ti-1] == '\t'))
+                    tok[--ti] = '\0';
+                if (ti == 0) break;
+                int found = -1;
+                for (int i = 0; i < REMAP_UI_COUNT; i++) {
+                    if (strcmp(tok, remap_target_ini_names[i]) == 0) { found = i; break; }
+                }
+                if (found >= 0)
+                    g_settings.remap[src] = remap_ui_index_to_value(found);
+                if (*p == ',') p++;
+            }
+            /* Sync the SWAP A/B flag with the loaded remap. */
+            g_settings.swap_ab =
+                (g_settings.remap[0] == REMAP_B &&
+                 g_settings.remap[1] == REMAP_A) ? 1 : 0;
+        }
         else if (parse_ini_line(line, "selector", value, sizeof(value))) {
             if (strcmp(value, "browser") == 0 || strcmp(value, "1") == 0)
                 g_settings.selector_mode = SELECTOR_MODE_BROWSER;
@@ -1152,9 +1241,14 @@ void settings_save(void) {
         return;
     }
 
-    char buf[800];
+    char buf[900];
     static const char *selector_mode_ini_names[] = {"carousel", "browser"};
     static const char *emu_mode_ini_names[] = {"nes", "dendy"};
+    const char *remap_a = remap_target_ini_names[remap_value_to_ui_index(g_settings.remap[0])];
+    const char *remap_b = remap_target_ini_names[remap_value_to_ui_index(g_settings.remap[1])];
+    const char *remap_s = remap_target_ini_names[remap_value_to_ui_index(g_settings.remap[2])];
+    const char *remap_t = remap_target_ini_names[remap_value_to_ui_index(g_settings.remap[3])];
+
     snprintf(buf, sizeof(buf),
         "; FRANK NES Settings\n"
         "player1 = %s\n"
@@ -1173,6 +1267,7 @@ void settings_save(void) {
         "swap_ab = %s\n"
         "bg_disabled = %s\n"
         "chan_mute = 0x%02X\n"
+        "remap = %s,%s,%s,%s\n"
         "selector = %s\n"
         "browser_path = %s\n"
         "browser_file = %s\n",
@@ -1192,6 +1287,7 @@ void settings_save(void) {
         g_settings.swap_ab ? "on" : "off",
         g_settings.bg_disabled ? "on" : "off",
         (unsigned)(g_settings.chan_mute_mask & 0x1F),
+        remap_a, remap_b, remap_s, remap_t,
         selector_mode_ini_names[g_settings.selector_mode & 1],
         g_settings.browser_path,
         g_settings.browser_file);

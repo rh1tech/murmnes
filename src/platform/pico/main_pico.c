@@ -529,6 +529,49 @@ static int apply_override_line(const char *line)
     }
     if (KEY_IS("swap_ab")) {
         g_settings.swap_ab = (strcmp(val, "on") == 0 || strcmp(val, "1") == 0) ? 1 : 0;
+        /* Sync remap table so a per-ROM swap_ab=on works even without a
+         * separate remap line. */
+        if (g_settings.swap_ab) {
+            g_settings.remap[0] = REMAP_B;
+            g_settings.remap[1] = REMAP_A;
+        } else {
+            g_settings.remap[0] = REMAP_A;
+            g_settings.remap[1] = REMAP_B;
+        }
+        return 1;
+    }
+    if (KEY_IS("remap")) {
+        /* Comma-separated list: A target, B target, Select target, Start target.
+         * Tokens are case-insensitive; a/b/select/start/up/down/left/right/none. */
+        static const char *tnames[] = {
+            "a", "b", "select", "start", "up", "down", "left", "right", "none"
+        };
+        const char *p = val;
+        for (int src = 0; src < 4; src++) {
+            while (*p == ' ' || *p == '\t') p++;
+            char tok[16];
+            size_t ti = 0;
+            while (*p && *p != ',' && ti < sizeof(tok) - 1) {
+                char c = *p++;
+                if (c >= 'A' && c <= 'Z') c = (char)(c - 'A' + 'a');
+                tok[ti++] = c;
+            }
+            tok[ti] = '\0';
+            while (ti > 0 && (tok[ti-1] == ' ' || tok[ti-1] == '\t'))
+                tok[--ti] = '\0';
+            if (ti > 0) {
+                for (int i = 0; i < 9; i++) {
+                    if (strcmp(tok, tnames[i]) == 0) {
+                        g_settings.remap[src] = (i == 8) ? REMAP_NONE : (uint8_t)i;
+                        break;
+                    }
+                }
+            }
+            if (*p == ',') p++;
+        }
+        g_settings.swap_ab =
+            (g_settings.remap[0] == REMAP_B &&
+             g_settings.remap[1] == REMAP_A) ? 1 : 0;
         return 1;
     }
     #undef KEY_IS
@@ -1476,15 +1519,34 @@ static void real_main(void)
                 case TURBO_OFF:
                 default:       turbo_b_mask = 0x02; break;
             }
-            /* Apply per-button turbo gates, then optional A/B swap. */
+            /* Apply per-button turbo gates, then the A/B/Select/Start
+             * remap. Direction bits U/D/L/R pass through unchanged. */
             int *jps[2] = { &joypad1, &joypad2 };
             for (int k = 0; k < 2; k++) {
                 int v = *jps[k];
                 if (g_settings.turbo_a != TURBO_OFF) v = (v & ~0x01) | (v & turbo_a_mask);
                 if (g_settings.turbo_b != TURBO_OFF) v = (v & ~0x02) | (v & turbo_b_mask);
-                if (g_settings.swap_ab) {
-                    int a = v & 0x01, b = (v >> 1) & 0x01;
-                    v = (v & ~0x03) | b | (a << 1);
+
+                /* Fast path: if the remap is identity (default), skip. */
+                int identity =
+                    g_settings.remap[0] == REMAP_A &&
+                    g_settings.remap[1] == REMAP_B &&
+                    g_settings.remap[2] == REMAP_SELECT &&
+                    g_settings.remap[3] == REMAP_START;
+                if (!identity) {
+                    int dirs = v & 0xF0;             /* U/D/L/R pass through */
+                    int out_abss = 0;                /* rebuilt A/B/Sel/Start */
+                    for (int src = 0; src < 4; src++) {
+                        if (v & (1 << src)) {
+                            uint8_t tgt = g_settings.remap[src];
+                            if (tgt != REMAP_NONE) {
+                                if (tgt < 4) out_abss |= (1 << tgt);
+                                /* Mapping to U/D/L/R also allowed — OR into dirs */
+                                else         dirs     |= (1 << tgt);
+                            }
+                        }
+                    }
+                    v = dirs | out_abss;
                 }
                 *jps[k] = v;
             }
